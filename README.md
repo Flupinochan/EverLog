@@ -265,33 +265,35 @@ IndexedDB オブジェクトストア `logs`（キー：自動採番）
 
 ## 10. ファイル構成
 
+ビルドには WXT を用いる。`entrypoints/` 配下の配置から manifest が自動生成されるため、`manifest.json` は成果物であり、リポジトリには置かない。
+
 ```
 /
-├── manifest.json
-├── devtools.html          # devtools.js を読み込むだけ
-├── devtools.js            # キャプチャ層 + パネル登録
-├── panel.html             # 閲覧 UI
-├── panel.js
-├── popup.html             # トグル・出力・設定
-├── popup.js
-├── background.js          # Service Worker（サニタイズ・保存・パージ）
+├── wxt.config.ts          # manifest の宣言（権限等）
+├── vitest.config.ts
+├── entrypoints/
+│   ├── devtools/
+│   │   ├── index.html     # devtools_page として登録される
+│   │   └── main.ts        # キャプチャ層の配線
+│   ├── background.ts      # Service Worker（サニタイズ・保存・パージ）
+│   ├── panel/             # 閲覧 UI（未実装）
+│   └── popup/             # トグル・出力・設定（未実装）
 └── lib/
-    ├── db.js              # IndexedDB ラッパー
-    ├── sanitize.js        # ヘッダー許可リスト・トークン除去
-    └── har.js             # HAR 1.2 変換
+    ├── network-log.ts     # データモデル + HAR → エントリ変換（純粋関数）
+    ├── capture.ts         # onRequestFinished 購読・getContent
+    ├── db.ts              # IndexedDB ラッパー（未実装）
+    ├── sanitize.ts        # ヘッダー許可リスト・トークン除去（未実装）
+    └── har.ts             # HAR 1.2 変換（未実装）
 ```
 
-### manifest.json（骨子）
+### manifest（骨子）
 
-```json
-{
-  "manifest_version": 3,
-  "name": "Network Log Recorder",
-  "version": "0.1.0",
-  "permissions": ["storage", "unlimitedStorage", "alarms"],
-  "devtools_page": "devtools.html",
-  "background": { "service_worker": "background.js" },
-  "action": { "default_popup": "popup.html" }
+`wxt.config.ts` で以下を宣言する（キャプチャ層のみの現時点では追加権限は不要で、`devtools_page` と `background` は WXT が自動生成する）。
+
+```ts
+manifest: {
+  name: 'EverLog',
+  permissions: ['storage', 'unlimitedStorage', 'alarms'],
 }
 ```
 
