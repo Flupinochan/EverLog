@@ -1,6 +1,6 @@
 {
-  "name": "wxt-react-starter",
-  "description": "manifest.json description",
+  "name": "everlog",
+  "description": "DevTools で観測したネットワークリクエストを記録し、後から参照できるようにする Chrome 拡張機能",
   "private": true,
   "version": "0.0.0",
   "type": "module",
