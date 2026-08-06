@@ -1,0 +1,22 @@
+@import 'tailwindcss';
+
+/*
+ * ネイティブ部品（datetime-local のカレンダー、チェックボックス、スクロールバー）を
+ * 配色に追従させる。これが無いと dark: を当てたパネルの中で入力欄だけ白く浮く。
+ */
+:root {
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+  }
+}
+
+/* DevTools のパネルは余白なしで埋める。dark: は prefers-color-scheme に追従する */
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
