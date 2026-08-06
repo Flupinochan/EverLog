@@ -1,0 +1,24 @@
+@import 'tailwindcss';
+
+/*
+ * ネイティブ部品（チェックボックス）を配色に追従させる。これが無いと dark: を当てた
+ * popup の中でチェックボックスだけ白く浮く。
+ */
+:root {
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+  }
+}
+
+/*
+ * popup の大きさは中身で決まる。パネルと違って高さを 100% にしたり overflow を
+ * 切ったりしない（ウィンドウ側が中身に合わせて縮むため、切ると内容が見えなくなる）。
+ * 幅だけは中身のはみ出しでウィンドウが伸び縮みしないよう App 側で固定している。
+ */
+body {
+  margin: 0;
+}

@@ -18,44 +18,55 @@ Chrome DevTools で観測したネットワークリクエスト／レスポン�
 src/entrypoints/devtools/main.ts（DevTools ページ・配線とパネル登録のみ）
   └─ src/lib/capture.ts（購読・getContent）
   │    └─ src/lib/network-log.ts（HAR → エントリ変換・純粋関数）
-  └─ src/lib/sanitize.ts（ヘッダー許可リスト・トークン除去）
-       └─ src/lib/db.ts（IndexedDB 保存・取得）
-src/entrypoints/background.ts（現状なにもしない）
+  ├─ src/lib/sanitize.ts（ヘッダー許可リスト・トークン除去）
+  │    └─ src/lib/db.ts（IndexedDB 保存・取得）
+  └─ src/lib/settings.ts（記録トグルの購読。OFF なら購読自体を外す）
+src/entrypoints/background.ts（バッジ表示のみ。保存は担わない）
+  └─ src/lib/settings.ts
 src/entrypoints/panel/（一覧・フィルタ・詳細表示）
   ├─ App.tsx（フックと表示コンポーネントの接続のみ）
   ├─ components/（表示のみ。props を描くだけ）
   ├─ hooks/（データ取得。LogSource を引数で受け取る）
   └─ src/lib/panel-view.ts（フィルタ組み立て・整形の純粋関数）
-       └─ src/lib/log-source.ts（読み取り専用の保存層入口）
-src/entrypoints/popup/（記録トグル・HAR 出力・設定）
+       └─ src/lib/log-source.ts（読み取りの LogSource / 全削除の LogAdmin）
+src/entrypoints/popup/（記録トグル・保存状況・全削除。HAR 出力と設定編集は未実装）
+  ├─ App.tsx（フックと表示コンポーネントの接続のみ）
+  ├─ components/（表示のみ。props を描くだけ）
+  └─ hooks/（useSettings は chrome.storage、useStorageStats は LogSource を引数で受け取る）
 ```
 
 **本番用コードは `src/`、テストは `tests/` に分ける。** `wxt.config.ts` の `srcDir: 'src'` によりビルド対象は `src/` 配下だけになり、`vitest.config.ts` の `include` は `tests/**/*.test.ts` だけを拾う。テストファイルを `src/` に置かない（ビルド対象に混ざる）。`tests/` は `src/` のディレクトリ構造をそのまま写す（`src/lib/db.ts` → `tests/lib/db.test.ts`）。
 
 テストから本番用コードを参照するときは相対パスではなく `@/` エイリアスを使う（`@` は `src/` を指す）。
 
-**保存に Service Worker を使わない。** DevTools ページは拡張機能のオリジンで動くため同じ IndexedDB を直接開けること、IndexedDB が複数コンテキストからの同時アクセスをトランザクションで直列化すること、サニタイズの集約は型で担保できることによる。Service Worker が唯一必須だった定期パージは要件から外した。Port の配線・メッセージの型定義・Service Worker の終了への耐性がまとめて不要になっている。この判断を覆す場合は README 4 章の検討を読むこと。
+**保存に Service Worker を使わない。** DevTools ページは拡張機能のオリジンで動くため同じ IndexedDB を直接開けること、IndexedDB が複数コンテキストからの同時アクセスをトランザクションで直列化すること、サニタイズの集約は型で担保できることによる。Service Worker が唯一必須だった定期パージは要件から外した。Port の配線・メッセージの型定義・Service Worker の終了への耐性がまとめて不要になっている。この判断を覆す場合は README 4 章の検討を読むこと。`background.ts` が持つのはバッジ表示だけであり、ここにデータの読み書きを足さない。落ちてよく、次に起きたときに設定を読み直して描けばよい状態を保つ。
+
+**コンテキスト間でメッセージを配らない。** DevTools ページ・popup・background は互いに送信せず、それぞれが `chrome.storage` と IndexedDB を直接読む。設定の変更は `watchSettings()`（`storage.onChanged`）で各自が受け取る。この形なので Service Worker の生存期間に依存しない。
 
 **メタデータ（`logs`）とボディ（`bodies`）は別ストアに分ける。** 一覧取得でボディをロードしないための分割であり、統合しない。`queryLogs()` は `bodies` を一切読まない。
 
 ### 実装状況
 
-- 実装済み：キャプチャ層（CAP-01 / 02 / 05 / 06 / 07）、サニタイズ層（SAN-01〜05）、保存層（保存・取得・ボディ取得・全削除）、閲覧 UI（VIEW-01〜04）。DevTools ページで 3 層が繋がっており、記録されたログはパネルで一覧・絞り込み・詳細表示できる。
-- 未実装：記録トグル（CAP-03）、URL フィルタ（CAP-04）、自動削除（保持期間・容量上限）、popup（トグル・出力・設定）、HAR 変換。
+- 実装済み：キャプチャ層（CAP-01 / 02 / 03 / 05 / 06 / 07）、サニタイズ層（SAN-01〜05）、保存層（保存・取得・ボディ取得・集計・全削除）、閲覧 UI（VIEW-01〜04）、popup（記録トグル POP-01・保存状況 POP-05・全削除）。DevTools ページで 3 層が繋がっており、記録されたログはパネルで一覧・絞り込み・詳細表示できる。
+- 未実装：URL フィルタ（CAP-04）、HAR 出力（POP-02 / 03・`lib/har.ts`）、設定編集 UI（POP-04）、自動削除（保持期間・容量上限。STO-05）。
 
-キャプチャ層は Chrome API を `startNetworkCapture()` の引数で受け取る。ブラウザなしでテストできる構造なので、この注入をやめない。
+キャプチャ層は Chrome API を `startNetworkCapture()` の引数で受け取る。ブラウザなしでテストできる構造なので、この注入をやめない。設定層（`src/lib/settings.ts`）も同じで、`chrome.storage` を引数で受け取り自分では `browser` を import しない。
+
+**記録の停止は購読の解除で行う**（`startNetworkCapture()` の戻り値を呼ぶ）。ハンドラ側で捨てる作りに変えない。記録していない間も `getContent()` を呼んでボディを取りに行くことになるため。加えて保存の直前にも記録状態を確認する（解除前に始まった 1 件が後から届くため）。
 
 `addLog()` は `sanitizeEntry()` の戻り値である `SanitizedLogEntry` のみを受け取る。未サニタイズの `NetworkLogEntry` を保存する経路を型で塞ぐためであり、この型の区別をなくさない。
 
-### 閲覧 UI（panel）の層分け
+### UI（panel / popup）の層分け
 
-**表示・データ取得・ロジックを混ぜない。** 後から Playwright / Storybook を差し込めるようにするための分離であり、まとめない。
+**表示・データ取得・ロジックを混ぜない。** 後から Playwright / Storybook を差し込めるようにするための分離であり、まとめない。panel と popup の両方に同じ分け方を適用する。
 
 - `components/` は props を描くだけ。`db.ts` を import しない（型の import は可）。
-- データ取得は `hooks/` に閉じる。フックは `LogSource`（`src/lib/log-source.ts`）を引数で受け取り、差し替えれば実物の IndexedDB なしで描画できる。キャプチャ層と同じ注入方針。
+- データ取得は `hooks/` に閉じる。フックは `LogSource`（`src/lib/log-source.ts`）や `chrome.storage` を引数で受け取り、差し替えれば実物の IndexedDB・storage なしで描画できる。キャプチャ層と同じ注入方針。
 - 絞り込み条件の組み立てと整形は `src/lib/panel-view.ts` の純粋関数に置く。テストはここに書く（DOM 環境は未導入）。
 
-スタイリングは Tailwind CSS v4。設定ファイルは持たず、`panel/style.css` の `@import 'tailwindcss'` と `wxt.config.ts` の Vite プラグイン登録だけで動く。配色は `prefers-color-scheme` に追従させ、`dark:` を当てたときはネイティブ部品用に `color-scheme` も切り替える。
+**保存層への入口は読み取り（`LogSource`）と破壊的操作（`LogAdmin`）に分ける。** 全削除を持つ popup だけが後者を受け取り、panel は `LogSource` しか知らない。`addLog()` はどちらにも載せない（保存経路はサニタイズ層を通る DevTools ページだけが持つ）。
+
+スタイリングは Tailwind CSS v4。設定ファイルは持たず、各エントリポイントの `style.css` の `@import 'tailwindcss'` と `wxt.config.ts` の Vite プラグイン登録だけで動く。配色は `prefers-color-scheme` に追従させ、`dark:` を当てたときはネイティブ部品用に `color-scheme` も切り替える。
 
 ## 設計上の制約（変更しないこと）
 
@@ -96,6 +107,9 @@ bun run test:watch
 3. 任意のページで DevTools を開く
 4. ページをリロードしてリクエストを発生させる（DevTools を開く前のリクエストは記録されない）
 5. DevTools の「EverLog」パネルを開き、一覧・絞り込み・詳細表示を確認する
+6. 拡張機能アイコンをクリックして popup を開き、記録トグル・保存件数・概算容量・全削除を確認する
+
+記録トグルを変更したときは **DevTools を開き直さずに**反映されること（OFF でリロードしても増えない、ON に戻すと再開する）と、バッジが追従することを見る。バッジは popup ではなく Service Worker が更新するため、ブラウザを再起動しても状態が残る。
 
 保存層を直接叩きたい場合は、DevTools ウィンドウを別ウィンドウに切り離し（undock）、DevTools 自身に対して DevTools を開いて（`Ctrl+Shift+I`）、コンソールから確認する。
 
@@ -103,6 +117,7 @@ bun run test:watch
 await everlog.queryLogs()                        // 新しい順に取得（ボディは含まない）
 await everlog.queryLogs({ urlIncludes: 'api' })  // 絞り込み
 await everlog.getBody(1)                         // ボディを個別取得
+await everlog.getStats()                         // 件数とボディサイズ合計
 await everlog.clearAll()                         // 全削除
 ```
 

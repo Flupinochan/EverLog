@@ -231,6 +231,56 @@ export async function queryLogs(filter: LogFilter = {}): Promise<StoredLog[]> {
   });
 }
 
+/** 保存状況の概算（仕様書 POP-05）。 */
+export interface StorageStats {
+  /** 保存済みログの件数 */
+  count: number;
+  /**
+   * 保存されたボディのサイズ合計（バイト）。
+   *
+   * **概算である。** メタデータ自体の容量と IndexedDB のオーバーヘッドは含まない。
+   * ボディを保存していないエントリ（`too_large` / `mime_excluded` / `fetch_failed`）の
+   * `bodySize` も含めない。元のレスポンスは大きくても、こちらは保存していないため。
+   */
+  bodyBytes: number;
+}
+
+/**
+ * 保存件数とボディサイズの合計を返す。
+ *
+ * `bodies` ストアは開かない。サイズは `logs` の `bodySize` から積めるため、
+ * 集計のためにボディ本体をロードしない（仕様書 8.3）。
+ *
+ * `navigator.storage.estimate()` は使わない。あれは拡張機能オリジン全体の値であり、
+ * EverLog が保存したログの量とは一致しないため。
+ */
+export async function getStats(): Promise<StorageStats> {
+  const db = await openDatabase();
+  const tx = db.transaction(LOG_STORE, 'readonly');
+  const cursorRequest = tx.objectStore(LOG_STORE).openCursor();
+
+  return new Promise<StorageStats>((resolve, reject) => {
+    let count = 0;
+    let bodyBytes = 0;
+
+    cursorRequest.onsuccess = () => {
+      const cursor = cursorRequest.result;
+      if (cursor === null) {
+        resolve({ count, bodyBytes });
+        return;
+      }
+
+      const log = cursor.value as StoredLog;
+      count += 1;
+      if (log.bodyStatus === 'stored') bodyBytes += log.bodySize;
+      cursor.continue();
+    };
+
+    cursorRequest.onerror = () =>
+      reject(cursorRequest.error ?? new Error('Failed to read stats'));
+  });
+}
+
 /** ログ ID からボディを取り出す。保存されていなければ null。 */
 export async function getBody(id: number): Promise<string | null> {
   const db = await openDatabase();

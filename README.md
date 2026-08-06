@@ -121,15 +121,23 @@ Service Worker を挟まないことで、Port の配線・メッセージの型
 
 ### 5.1 キャプチャ（devtools.js）
 
-| ID | 機能 | 内容 |
-| --- | --- | --- |
-| CAP-01 | リクエスト捕捉 | `chrome.devtools.network.onRequestFinished` で完了したリクエストを捕捉する |
-| CAP-02 | ボディ取得 | `getContent()` でレスポンスボディを取得する。API はコールバック形式のため Promise ラッパーを用意する |
-| CAP-03 | 記録 ON/OFF | 記録の有効・無効を切り替える。状態は `chrome.storage.local` に永続化し、ブラウザ再起動後も維持する |
-| CAP-04 | URL フィルタ | 設定した URL パターンに一致するリクエストのみ記録する（採取時点で除外し、保存量を抑える） |
-| CAP-05 | MIME タイプフィルタ | JSON・テキスト系のみボディを保存する。画像・動画・フォント等はメタデータのみ記録する |
-| CAP-06 | サイズ上限 | 設定値を超えるボディは保存せず、メタデータに超過フラグを立てる |
-| CAP-07 | タブ情報の付与 | `chrome.devtools.inspectedWindow.tabId` を各エントリに付与する |
+| ID | 機能 | 内容 | 状態 |
+| --- | --- | --- | --- |
+| CAP-01 | リクエスト捕捉 | `chrome.devtools.network.onRequestFinished` で完了したリクエストを捕捉する | 実装済み |
+| CAP-02 | ボディ取得 | `getContent()` でレスポンスボディを取得する。API はコールバック形式のため Promise ラッパーを用意する | 実装済み |
+| CAP-03 | 記録 ON/OFF | 記録の有効・無効を切り替える。状態は `chrome.storage.local` に永続化し、ブラウザ再起動後も維持する | 実装済み |
+| CAP-04 | URL フィルタ | 設定した URL パターンに一致するリクエストのみ記録する（採取時点で除外し、保存量を抑える） | 未実装 |
+| CAP-05 | MIME タイプフィルタ | JSON・テキスト系のみボディを保存する。画像・動画・フォント等はメタデータのみ記録する | 実装済み |
+| CAP-06 | サイズ上限 | 設定値を超えるボディは保存せず、メタデータに超過フラグを立てる | 実装済み（上限値は既定の固定値。設定からの変更は POP-04） |
+| CAP-07 | タブ情報の付与 | `chrome.devtools.inspectedWindow.tabId` を各エントリに付与する | 実装済み |
+
+補足（実装時の決定）：
+
+- 記録の停止は**購読の解除**で行う（`startNetworkCapture()` の戻り値を呼ぶ）。ハンドラ側で捨てる作りにすると、記録していない間も `getContent()` を呼んでボディを取りに行ってしまうため。ON に戻したときは購読を張り直す。DevTools を開き直す必要はない。
+- 加えて保存の直前にも記録状態を確認する。OFF に切り替えた時点で `getContent()` の応答を待っていた 1 件が、解除の後から届いて保存されるのを防ぐため。
+- ページ URL の追跡（`inspectedWindow.eval` と `onNavigated`）は記録状態に関わらず常に回す。ON にした直後の 1 件目から正しい `pageUrl` を載せるため。
+- 設定は `chrome.storage.local` の `settings` キーに 1 つのオブジェクトとして持つ。項目ごとにキーを分けると、読み書きの往復と変更購読が項目数だけ増えるため。読み出しは必ず `normalizeSettings()` を通し、未設定・型違い・拡張機能の更新で形が変わった値をすべて既定値に寄せる。
+- 記録の既定値は ON とする。「気づいたときには既にログが流れている」場面を救うのが目的であり、既定で止まっていると目的を果たせないため。
 
 ### 5.2 サニタイズ
 
@@ -160,7 +168,7 @@ Service Worker を挟まないことで、Port の配線・メッセージの型
 | STO-01 | 保存先 | IndexedDB（DB 名 `everlog`）。`chrome.storage.local` は既定 10MB であり構造化検索もできないため採用しない | 実装済み |
 | STO-02 | ストア構成 | メタデータの `logs` とボディの `bodies` に分ける。一覧取得でボディをロードしない（8.3）ための必須の分割 | 実装済み |
 | STO-03 | インデックス | `logs` の `ts`（記録時刻）、`tabId`、`host` にインデックスを張る。取得は常に `ts` を降順に辿り、期間はインデックス範囲で絞る。URL 部分一致はインデックスで表現できないためカーソル内で判定する | 実装済み |
-| STO-04 | 基本操作 | 保存 / 条件付き取得 / ボディ取得 / 全削除 | 実装済み |
+| STO-04 | 基本操作 | 保存 / 条件付き取得 / ボディ取得 / 全削除 / 保存状況の集計（`getStats()`。POP-05 用に件数とボディサイズ合計を返す。`bodies` は開かない） | 実装済み |
 | STO-05 | 自動パージ | 保持期間や容量上限による自動削除 | **未実装**。将来検討 |
 
 `unlimitedStorage` は宣言しない。自動削除を持たない現状では上限を自ら管理していないため、既定クォータの範囲で運用する。`alarms` も不要（5.3 に定期処理が無いため）。
@@ -191,13 +199,21 @@ Service Worker を挟まないことで、Port の配線・メッセージの型
 
 ### 5.5 出力・設定（popup.html）
 
-| ID | 機能 | 内容 |
-| --- | --- | --- |
-| POP-01 | 記録トグル | 記録の ON/OFF を切り替える。`chrome.action.setBadgeText` で稼働状態をアイコンに表示する |
-| POP-02 | 出力ボタン | 保存済みログを HAR ファイルとして書き出す |
-| POP-03 | 出力範囲 | 全件、または期間・URL パターンを指定して出力する |
-| POP-04 | 設定 | URL フィルタ、MIME フィルタ、ボディサイズ上限、保持日数を編集する |
-| POP-05 | 保存状況 | 保存件数と概算使用容量を表示する |
+| ID | 機能 | 内容 | 状態 |
+| --- | --- | --- | --- |
+| POP-01 | 記録トグル | 記録の ON/OFF を切り替える。`chrome.action.setBadgeText` で稼働状態をアイコンに表示する | 実装済み |
+| POP-02 | 出力ボタン | 保存済みログを HAR ファイルとして書き出す | 未実装 |
+| POP-03 | 出力範囲 | 全件、または期間・URL パターンを指定して出力する | 未実装 |
+| POP-04 | 設定 | URL フィルタ、MIME フィルタ、ボディサイズ上限、保持日数を編集する | 未実装 |
+| POP-05 | 保存状況 | 保存件数と概算使用容量を表示する | 実装済み |
+
+補足（実装時の決定）：
+
+- **バッジの更新は Service Worker（`background.ts`）が担う。** popup は閉じるとコンテキストごと消えるため、popup で `setBadgeText` を呼ぶだけでは、ブラウザ再起動後に記録が ON でもバッジが出ない。Service Worker は起動のたびに本体を実行するので、そこで設定を読み直してバッジを描き、以後は `storage.onChanged` で追従する。**保存はここに置かない**（4 章）。この Service Worker は落ちてよく、次に起きたときに描き直せばよい。
+- popup は設定を書いた直後に自分の state を進めず、`storage.onChanged` の通知で更新する。保存に失敗したときに表示だけ切り替わった状態にならず、popup と DevTools ページが同時に開いていても表示が揃う。
+- 全削除はボタン自身が確認状態に変わる 2 段階とし、`window.confirm()` は使わない。popup は外側を触ると閉じるため、ネイティブダイアログとの相性が悪い。
+- 概算使用容量は `logs` の `bodySize` を合計して出す（`getStats()`）。`navigator.storage.estimate()` は拡張機能オリジン全体の値であり、EverLog が保存したログの量とは一致しないため使わない。合計にはボディを保存していないエントリ（`too_large` / `mime_excluded` / `fetch_failed`）を含めず、メタデータ自体の容量も数えないため、あくまで目安として表示する。
+- popup は開いている間しか生きないため、保存状況の自動更新は持たない。増えた分を見るには開き直す。
 
 ---
 
@@ -322,7 +338,7 @@ IndexedDB オブジェクトストア `logs`（キー：自動採番）
 │   │   ├── devtools/
 │   │   │   ├── index.html     # devtools_page として登録される
 │   │   │   └── main.ts        # キャプチャ → サニタイズ → 保存 の配線 + パネル登録
-│   │   ├── background.ts      # Service Worker（現状なにもしない）
+│   │   ├── background.ts      # Service Worker（バッジ表示のみ。保存は担わない）
 │   │   ├── panel/             # 閲覧 UI（React）
 │   │   │   ├── index.html     # panel.html として出力される
 │   │   │   ├── main.tsx       # マウントのみ
@@ -330,13 +346,20 @@ IndexedDB オブジェクトストア `logs`（キー：自動採番）
 │   │   │   ├── App.tsx        # フックと表示コンポーネントの接続
 │   │   │   ├── components/    # 表示のみ（FilterBar / LogTable / LogDetail）
 │   │   │   └── hooks/         # データ取得（useLogQuery / useLogBody）
-│   │   └── popup/             # トグル・出力・設定（未実装）
+│   │   └── popup/             # トグル・保存状況（出力・設定は未実装）
+│   │       ├── index.html     # popup.html として出力される
+│   │       ├── main.tsx       # マウントのみ
+│   │       ├── style.css      # Tailwind の読み込みと最小限の全体指定
+│   │       ├── App.tsx        # フックと表示コンポーネントの接続
+│   │       ├── components/    # 表示のみ（RecordingToggle / StorageStats）
+│   │       └── hooks/         # データ取得（useSettings / useStorageStats）
 │   └── lib/
 │       ├── network-log.ts     # データモデル + HAR → エントリ変換（純粋関数）
 │       ├── capture.ts         # onRequestFinished 購読・getContent
 │       ├── sanitize.ts        # ヘッダー許可リスト・トークン除去
-│       ├── db.ts              # IndexedDB（保存・取得・全削除）
-│       ├── log-source.ts      # 閲覧 UI から見た保存層の入口（読み取り専用）
+│       ├── db.ts              # IndexedDB（保存・取得・集計・全削除）
+│       ├── settings.ts        # 設定の型・既定値・chrome.storage の読み書きと購読
+│       ├── log-source.ts      # UI から見た保存層の入口（読み取りの LogSource / 全削除の LogAdmin）
 │       ├── panel-view.ts      # 閲覧 UI の表示ロジック（純粋関数）
 │       └── har.ts             # HAR 1.2 変換（未実装）
 └── tests/                     # テストコード（ビルド対象外）
@@ -345,6 +368,7 @@ IndexedDB オブジェクトストア `logs`（キー：自動採番）
         ├── capture.test.ts
         ├── sanitize.test.ts
         ├── db.test.ts
+        ├── settings.test.ts
         └── panel-view.test.ts
 ```
 
@@ -357,6 +381,8 @@ IndexedDB オブジェクトストア `logs`（キー：自動採番）
 - **絞り込み条件の組み立てと整形は `lib/panel-view.ts` の純粋関数**に置く。描画環境なしでテストできる状態を保つため、この判定をコンポーネントへ移さない。
 
 現時点で UI テスト（Playwright / Storybook）は導入していないが、後から差し込めるようにこの分離を先に済ませてある。
+
+popup も同じ 3 層で分ける。`hooks/useSettings` が `chrome.storage` を、`hooks/useStorageStats` が `LogSource` を受け取り、表示コンポーネントは props を描くだけにする。保存層への入口は読み取りの `LogSource` と全削除の `LogAdmin` に分けてあり、popup だけが後者を受け取る。`addLog()` はどちらにも載せない（保存経路はサニタイズ層を通る DevTools ページだけが持つ）。popup 用の純粋ロジック（`lib/*-view.ts`）は現時点で置いていない。出力範囲の指定（POP-03）が入って条件の組み立てが必要になったときに作る。
 
 スタイリングは Tailwind CSS v4 を使う。設定ファイルは持たず、`src/entrypoints/panel/style.css` の `@import 'tailwindcss'` と `wxt.config.ts` の Vite プラグイン登録だけで完結する。ビルド時に CSS へ展開されるため、拡張機能の CSP には影響しない。
 
@@ -381,16 +407,16 @@ IndexedDB オブジェクトストア `logs`（キー：自動採番）
 
 ### manifest（骨子）
 
-`wxt.config.ts` で以下を宣言する（キャプチャ層のみの現時点では追加権限は不要で、`devtools_page` と `background` は WXT が自動生成する）。
+`wxt.config.ts` で以下を宣言する。`devtools_page` / `background` / `action` はエントリポイントの配置から WXT が自動生成するため書かない。
 
 ```ts
 manifest: {
   name: 'EverLog',
-  permissions: ['storage', 'unlimitedStorage', 'alarms'],
+  permissions: ['storage'],
 }
 ```
 
-`debugger` 権限および `host_permissions` は不要である。
+`storage` は設定（記録トグル等）の永続化に使う。`unlimitedStorage` は宣言しない（自動削除を持たない現状では上限を自ら管理していないため、既定クォータの範囲で運用する）。`alarms` も宣言しない（定期処理を持たないため）。`debugger` 権限および `host_permissions` は不要である。
 
 ---
 
@@ -401,8 +427,8 @@ manifest: {
 | 1 | キャプチャ層と保存層の疎通 | DevTools を開いた状態でリクエストが IndexedDB に保存される | 完了 |
 | 2 | サニタイズ層 | `Authorization` ヘッダーとボディ内トークンが保存されないことを確認できる | 完了 |
 | 3 | 閲覧 UI | パネルで一覧・フィルタ・詳細表示ができる | 完了 |
-| 4 | popup（トグル・出力） | HAR を書き出し、DevTools にインポートして閲覧できる | 未着手（CAP-03 / POP-01〜05・`lib/har.ts`） |
-| 5 | パージと設定 | 7 日経過分が自動削除され、設定値が反映される | 未着手（CAP-04 / STO-05） |
+| 4 | popup（トグル・出力） | HAR を書き出し、DevTools にインポートして閲覧できる | 一部完了。記録トグル（CAP-03 / POP-01）・保存状況と全削除（POP-05）は実装済み。残りは HAR 出力（POP-02 / POP-03・`lib/har.ts`） |
+| 5 | パージと設定 | 7 日経過分が自動削除され、設定値が反映される | 未着手（CAP-04 / POP-04 / STO-05） |
 
 ---
 
