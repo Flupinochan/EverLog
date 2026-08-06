@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LogFilter, StoredLog } from '@/lib/db';
 import type { LogSource } from '@/lib/log-source';
+import { hasSameLogs } from '@/lib/panel-view';
 
 export interface LogQueryResult {
   logs: StoredLog[];
@@ -43,21 +44,29 @@ export function useLogQuery(
 
   // 条件を変えた直後に古い応答が届いても、それで上書きしないための世代番号
   const requestId = useRef(0);
+  // 走査中かどうか。自動更新の間引きにだけ使う（条件変更や手動更新は間引かない）
+  const inFlight = useRef(false);
 
   const load = useCallback(async () => {
     const id = ++requestId.current;
+    inFlight.current = true;
     try {
       // 上限より 1 件多く取り、続きがあるかを判定する
       const results = await source.queryLogs({ ...filter, limit: limit + 1 });
       if (id !== requestId.current) return;
-      setLogs(results.slice(0, limit));
+      const page = results.slice(0, limit);
+      // 中身が変わっていなければ配列の同一性を保ち、再描画を起こさない
+      setLogs((prev) => (hasSameLogs(prev, page) ? prev : page));
       setHasMore(results.length > limit);
       setError(null);
     } catch (cause) {
       if (id !== requestId.current) return;
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      if (id === requestId.current) setInitialLoading(false);
+      if (id === requestId.current) {
+        inFlight.current = false;
+        setInitialLoading(false);
+      }
     }
   }, [source, filter, limit]);
 
@@ -67,8 +76,21 @@ export function useLogQuery(
 
   useEffect(() => {
     if (refreshIntervalMs === null) return;
-    const timer = setInterval(() => void load(), refreshIntervalMs);
-    return () => clearInterval(timer);
+
+    const tick = () => {
+      // URL 部分一致などインデックスで表現できない条件では 1 回の取得がストア全走査に
+      // なりうる。見えていない間は取りに行かず、前回の走査が終わるまで次を始めない。
+      if (document.hidden || inFlight.current) return;
+      void load();
+    };
+
+    const timer = setInterval(tick, refreshIntervalMs);
+    // 再び見えたときは次の tick を待たずに追いつく
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', tick);
+    };
   }, [load, refreshIntervalMs]);
 
   const reload = useCallback(() => void load(), [load]);

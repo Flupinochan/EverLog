@@ -16,10 +16,17 @@ export interface LogBodyResult {
   error: string | null;
 }
 
+/** 取得済みの結果。どのログのものかを一緒に持つ。 */
+interface Loaded {
+  logId: number | null;
+  body: string | null;
+  error: string | null;
+}
+
+const NOTHING_LOADED: Loaded = { logId: null, body: null, error: null };
+
 export function useLogBody(source: LogSource, log: StoredLog | null): LogBodyResult {
-  const [body, setBody] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState<Loaded>(NOTHING_LOADED);
 
   // 選択を素早く切り替えたときに、前の応答で上書きしないための世代番号
   const requestId = useRef(0);
@@ -28,30 +35,34 @@ export function useLogBody(source: LogSource, log: StoredLog | null): LogBodyRes
 
   useEffect(() => {
     const id = ++requestId.current;
-    setBody(null);
-    setError(null);
 
     // 保存されていないことが分かっているものは取りに行かない（理由は詳細側で表示する）
     if (logId === null || bodyStatus !== 'stored') {
-      setLoading(false);
+      setLoaded({ logId, body: null, error: null });
       return;
     }
 
-    setLoading(true);
     source
       .getBody(logId)
       .then((result) => {
         if (id !== requestId.current) return;
-        setBody(result);
+        setLoaded({ logId, body: result, error: null });
       })
       .catch((cause: unknown) => {
         if (id !== requestId.current) return;
-        setError(cause instanceof Error ? cause.message : String(cause));
-      })
-      .finally(() => {
-        if (id === requestId.current) setLoading(false);
+        setLoaded({
+          logId,
+          body: null,
+          error: cause instanceof Error ? cause.message : String(cause),
+        });
       });
   }, [source, logId, bodyStatus]);
 
-  return { body, loading, error };
+  // 取得結果を state のクリアではなく描画時の突き合わせで捨てる。effect は描画の後に
+  // 走るため、state を effect でクリアする作りだと、行を切り替えた直後の 1 フレームで
+  // 「新しいエントリのヘッダー＋前のエントリのボディ」が表示されてしまう。
+  if (loaded.logId !== logId) {
+    return { body: null, loading: logId !== null && bodyStatus === 'stored', error: null };
+  }
+  return { body: loaded.body, loading: false, error: loaded.error };
 }

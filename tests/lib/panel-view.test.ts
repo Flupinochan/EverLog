@@ -9,8 +9,10 @@ import {
   formatDuration,
   formatTimeOfDay,
   formatTimestamp,
+  hasSameLogs,
   isJsonLike,
   parseDateTimeLocal,
+  parseRangeEnd,
   sortHeaders,
   urlPath,
 } from '@/lib/panel-view';
@@ -56,7 +58,8 @@ describe('buildFilter', () => {
       to: '2026-08-06T23:59',
     });
     expect(filter.from).toBe(new Date(2026, 7, 6, 0, 0).getTime());
-    expect(filter.to).toBe(new Date(2026, 7, 6, 23, 59).getTime());
+    // 上限は指定した分の終わりまで含める（分単位入力で秒が切り捨てられないように）
+    expect(filter.to).toBe(new Date(2026, 7, 6, 23, 59, 59, 999).getTime());
   });
 
   it('onlyCurrentTab のときだけ tabId を積む', () => {
@@ -67,6 +70,37 @@ describe('buildFilter', () => {
   it('tabId が不明なら onlyCurrentTab でも積まない', () => {
     // 全件が消えるより、絞り込まないほうがまし
     expect(buildFilter({ ...EMPTY_FILTER_FORM, onlyCurrentTab: true }, undefined)).toEqual({});
+  });
+});
+
+describe('parseRangeEnd', () => {
+  it('分までの入力はその分の終わりまで含める', () => {
+    // 12:31 を上限に選んだとき 12:31:20 の記録が黙って外れないこと
+    expect(parseRangeEnd('2026-08-06T12:31')).toBe(new Date(2026, 7, 6, 12, 31, 59, 999).getTime());
+  });
+
+  it('秒まで入力された場合はその秒の終わりまで', () => {
+    expect(parseRangeEnd('2026-08-06T12:31:20')).toBe(
+      new Date(2026, 7, 6, 12, 31, 20, 999).getTime(),
+    );
+  });
+
+  it('空文字と解釈できない値は undefined', () => {
+    expect(parseRangeEnd('')).toBeUndefined();
+    expect(parseRangeEnd('あした')).toBeUndefined();
+  });
+});
+
+describe('hasSameLogs', () => {
+  it('ID の並びが同じなら true', () => {
+    expect(hasSameLogs([{ id: 3 }, { id: 2 }], [{ id: 3 }, { id: 2 }])).toBe(true);
+    expect(hasSameLogs([], [])).toBe(true);
+  });
+
+  it('件数や並びが違えば false', () => {
+    expect(hasSameLogs([{ id: 3 }], [{ id: 3 }, { id: 2 }])).toBe(false);
+    expect(hasSameLogs([{ id: 2 }, { id: 3 }], [{ id: 3 }, { id: 2 }])).toBe(false);
+    expect(hasSameLogs([{ id: 4 }], [{ id: 5 }])).toBe(false);
   });
 });
 

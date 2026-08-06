@@ -54,6 +54,20 @@ export function parseDateTimeLocal(value: string): number | undefined {
   return Number.isNaN(parsed) ? undefined : parsed;
 }
 
+/**
+ * 期間の上限を読む。`queryLogs()` の `to` は「含む」ため、入力の粒度いっぱいまで含める。
+ *
+ * `<input type="datetime-local">` は既定で分単位までしか入力できない。素直に解釈すると
+ * 終端が `:00.000` になり、`12:31` を指定したとき 12:31:20 の記録が黙って外れる。
+ * 秒が入力されている場合はその秒の終わり（`.999`）まで含める。
+ */
+export function parseRangeEnd(value: string): number | undefined {
+  const parsed = parseDateTimeLocal(value);
+  if (parsed === undefined) return undefined;
+  const hasSeconds = /T\d{2}:\d{2}:\d{2}/.test(value.trim());
+  return hasSeconds ? parsed + 999 : parsed + 59_999;
+}
+
 /** 数字だけからなる文字列をステータスコードとして読む。それ以外は `undefined`。 */
 function parseStatus(value: string): number | undefined {
   const trimmed = value.trim();
@@ -84,7 +98,7 @@ export function buildFilter(form: FilterForm, currentTabId?: number): LogFilter 
   const from = parseDateTimeLocal(form.from);
   if (from !== undefined) filter.from = from;
 
-  const to = parseDateTimeLocal(form.to);
+  const to = parseRangeEnd(form.to);
   if (to !== undefined) filter.to = to;
 
   if (form.onlyCurrentTab && currentTabId !== undefined) filter.tabId = currentTabId;
@@ -192,6 +206,21 @@ export function classifyStatus(status: number): StatusClass {
   if (status >= 200) return 'success';
   // 0 は「レスポンスが返らなかった」を意味する（中断・ネットワークエラー）
   return 'unknown';
+}
+
+/**
+ * 2 つの取得結果が同じ並びかを ID だけで判定する。
+ *
+ * `logs` は追記専用で、保存後にメタデータが書き換わることはない。したがって ID の並びが
+ * 同じなら内容も同じであり、自動更新のたびに新しい配列を state に入れて再描画を
+ * 走らせる必要はない（開いている詳細のボディ整形まで巻き添えで再実行されるため）。
+ */
+export function hasSameLogs(
+  a: ReadonlyArray<{ id: number }>,
+  b: ReadonlyArray<{ id: number }>,
+): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((log, index) => log.id === b[index]?.id);
 }
 
 /** URL からパス以降を取り出す。パースできない URL はそのまま返す。 */

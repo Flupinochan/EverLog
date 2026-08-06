@@ -4,7 +4,7 @@
  * ボディの取得は行わず、props で受け取る。取得は `useLogBody` の責務。
  */
 
-import type { ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import type { StoredLog } from '@/lib/db';
 import {
   describeBodyStatus,
@@ -59,10 +59,14 @@ export function LogDetail({ log, body, bodyLoading, bodyError, onClose }: Props)
   }
 
   const reason = describeBodyStatus(log.bodyStatus);
-  const dropped = [...log.droppedRequestHeaders, ...log.droppedResponseHeaders];
+  const hasDropped =
+    log.droppedRequestHeaders.length > 0 || log.droppedResponseHeaders.length > 0;
 
   return (
-    <aside className="flex w-full min-w-80 shrink-0 flex-col overflow-y-auto border-l border-zinc-200 md:w-2/5 dark:border-zinc-700">
+    // 縦積み（DevTools を右にドックしたときなど狭い幅）では高さを分け合って自前で
+    // スクロールさせる。shrink-0 のままだと body の overflow:hidden に切られて
+    // ボディまで辿り着けない。
+    <aside className="flex min-h-0 w-full flex-1 flex-col overflow-y-auto border-t border-zinc-200 md:w-2/5 md:min-w-80 md:flex-none md:border-t-0 md:border-l dark:border-zinc-700">
       <header className="sticky top-0 z-10 flex items-start gap-2 border-b border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-800">
         <span className="min-w-0 flex-1 font-mono text-xs break-all">{log.url}</span>
         <button
@@ -99,12 +103,22 @@ export function LogDetail({ log, body, bodyLoading, bodyError, onClose }: Props)
         <Rows rows={sortHeaders(log.responseHeaders)} />
       </Section>
 
-      {dropped.length > 0 && (
+      {hasDropped && (
         <Section title="保存しなかったヘッダー">
-          {/* 値は保存していない。「独自認証ヘッダーが付いていた」事実だけを残す（README 5.2） */}
-          <p className="font-mono text-xs break-all text-zinc-500 dark:text-zinc-400">
-            {dropped.join(', ')}
-          </p>
+          {/* 値は保存していない。「独自認証ヘッダーが付いていた」事実だけを残す（README 5.2）。
+              同名でも request と response では意味が違うため、行を分けて出す */}
+          <Rows
+            rows={[
+              ...(log.droppedRequestHeaders.length > 0
+                ? ([['リクエスト', log.droppedRequestHeaders.join(', ')]] as Array<[string, string]>)
+                : []),
+              ...(log.droppedResponseHeaders.length > 0
+                ? ([['レスポンス', log.droppedResponseHeaders.join(', ')]] as Array<
+                    [string, string]
+                  >)
+                : []),
+            ]}
+          />
         </Section>
       )}
 
@@ -135,6 +149,13 @@ function BodyView({
   reason: string;
   mimeType: string;
 }) {
+  // 整形は最大 1MB の JSON.parse + stringify になる。自動更新のたびに
+  // やり直さないよう、ボディが変わったときだけ計算する。
+  const { text, pretty } = useMemo(
+    () => (body === null ? { text: '', pretty: false } : formatBody(body, mimeType)),
+    [body, mimeType],
+  );
+
   if (loading) return <p className="text-xs text-zinc-500">読み込み中…</p>;
   if (error !== null) {
     return <p className="text-xs text-red-600 dark:text-red-400">読み込みに失敗しました: {error}</p>;
@@ -145,7 +166,6 @@ function BodyView({
     return <p className="text-xs text-zinc-500">ボディは保存されていません</p>;
   }
 
-  const { text, pretty } = formatBody(body, mimeType);
   return (
     <>
       {pretty && <p className="mb-1 text-xs text-zinc-500">JSON として整形して表示しています</p>}
