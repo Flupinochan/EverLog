@@ -11,10 +11,7 @@ import { sanitizeEntry } from '@/lib/sanitize';
 import { loadSettings, watchSettings } from '@/lib/settings';
 import type { NetworkLogEntry } from '@/lib/network-log';
 
-/**
- * 記録が有効か（CAP-03）。設定を読み終えるまでは購読を張らないため、
- * ここでの初期値は「まだ何も記録していない」ことを表す。切り替えは `applyRecording()`。
- */
+/** 記録が有効か（CAP-03）。切り替えは `applyRecording()`。 */
 let recording = false;
 
 /**
@@ -24,6 +21,10 @@ let recording = false;
  * 受け取らないため、素通しで保存する経路は型で塞がれている。
  */
 async function saveEntry(entry: NetworkLogEntry): Promise<void> {
+  // 記録の可否が確定するまで判断を保留する。DevTools を開いた直後は設定を読み終える
+  // 前であり、ここで捨てると「記録は ON なのに開いた直後の数件だけ残らない」ことになる。
+  await settingsReady;
+
   // 記録を OFF にした時点で `getContent()` の応答を待っていた分は、ここで捨てる。
   // 購読の解除だけでは、解除前に始まった 1 件が後から届いて保存されてしまう。
   if (!recording) return;
@@ -74,6 +75,20 @@ let stopCapture: (() => void) | null = null;
 /** 設定を一度でも反映したか。初回読み込みと変更通知の競合を避けるために持つ。 */
 let settingsApplied = false;
 
+function startCapture(): void {
+  if (stopCapture !== null) return;
+  stopCapture = startNetworkCapture(
+    browser.devtools.network,
+    () => ({ tabId: browser.devtools.inspectedWindow.tabId, pageUrl }),
+    (entry) => void saveEntry(entry),
+  );
+}
+
+function stopCapturing(): void {
+  stopCapture?.();
+  stopCapture = null;
+}
+
 /**
  * 記録状態を反映する。
  *
@@ -84,25 +99,24 @@ function applyRecording(next: boolean): void {
   settingsApplied = true;
   recording = next;
 
-  if (next) {
-    if (stopCapture !== null) return;
-    stopCapture = startNetworkCapture(
-      browser.devtools.network,
-      () => ({ tabId: browser.devtools.inspectedWindow.tabId, pageUrl }),
-      (entry) => void saveEntry(entry),
-    );
-    return;
-  }
-
-  stopCapture?.();
-  stopCapture = null;
+  if (next) startCapture();
+  else stopCapturing();
 }
 
-void loadSettings(browser.storage.local).then((settings) => {
-  // 読み込み中に切り替えられていたら、そちらが新しいので上書きしない
+/**
+ * 初回の設定読み込み。`saveEntry()` はこれを待ってから記録の可否を判断する。
+ *
+ * 読み込み中に変更通知が届いていたら、そちらが新しいので上書きしない。
+ */
+const settingsReady = loadSettings(browser.storage.local).then((settings) => {
   if (settingsApplied) return;
   applyRecording(settings.recording);
 });
+
+// 設定を読み終える前から購読は張っておく。ここを待つと、ページの読み込み中に
+// DevTools を開いた場合などに最初の数件を取りこぼす。記録が OFF だった場合は
+// 上の読み込みが購読を外し、その間に拾った分は saveEntry() が捨てる。
+startCapture();
 
 // popup で切り替えたときに、DevTools を開き直さずに反映されるようにする
 watchSettings(browser.storage, (settings) => {

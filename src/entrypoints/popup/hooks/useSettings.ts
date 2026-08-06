@@ -25,11 +25,11 @@ export interface SettingsResult {
 }
 
 /**
- * @param storage 設定の保存先
+ * @param area 設定の保存先（引数名は `storage` にしない。`src/lib/settings.ts` の注記を参照）
  * @param changes 変更通知の発行元。別の popup や設定の外部変更に追従するために購読する
  */
 export function useSettings(
-  storage: SettingsStorageArea,
+  area: SettingsStorageArea,
   changes: SettingsChangeSource,
 ): SettingsResult {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
@@ -38,35 +38,40 @@ export function useSettings(
 
   useEffect(() => {
     let alive = true;
+    // 初回の読み込み中に変更通知が届くことがある。通知のほうが新しいので、
+    // 後から解決した読み込み結果でそれを巻き戻さない。
+    let applied = false;
 
-    void loadSettings(storage).then((loaded) => {
+    const apply = (next: Settings) => {
       if (!alive) return;
-      setSettings(loaded);
+      applied = true;
+      setSettings(next);
       setLoading(false);
-    });
+    };
 
     // 書いた側にも通知が来る。update() で state を先に進めず通知だけで更新すれば、
     // 保存に失敗したときに表示だけ切り替わった状態にならない。
-    const stop = watchSettings(changes, (next) => {
-      if (!alive) return;
-      setSettings(next);
-      setLoading(false);
+    const stop = watchSettings(changes, apply);
+
+    void loadSettings(area).then((loaded) => {
+      if (applied) return;
+      apply(loaded);
     });
 
     return () => {
       alive = false;
       stop();
     };
-  }, [storage, changes]);
+  }, [area, changes]);
 
   const update = useCallback(
     (patch: Partial<Settings>) => {
       setError(null);
-      void saveSettings(storage, patch).catch((cause: unknown) => {
+      void saveSettings(area, patch).catch((cause: unknown) => {
         setError(cause instanceof Error ? cause.message : String(cause));
       });
     },
-    [storage],
+    [area],
   );
 
   return { settings, loading, error, update };

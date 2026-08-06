@@ -24,18 +24,19 @@ interface Props {
   /** 差し替えは Storybook・UI テスト用。既定は実物の IndexedDB / chrome.storage */
   source?: LogSource;
   admin?: LogAdmin;
-  storage?: SettingsStorageArea;
+  /** 設定の保存先。名前を `storage` にしない（`src/lib/settings.ts` の注記を参照） */
+  area?: SettingsStorageArea;
   changes?: SettingsChangeSource;
 }
 
 export function App({
   source = indexedDbLogSource,
   admin = indexedDbLogAdmin,
-  storage = browser.storage.local,
+  area = browser.storage.local,
   changes = browser.storage,
 }: Props = {}) {
   const { settings, loading: settingsLoading, error: settingsError, update } = useSettings(
-    storage,
+    area,
     changes,
   );
   const { stats, loading: statsLoading, error: statsError, reload } = useStorageStats(source);

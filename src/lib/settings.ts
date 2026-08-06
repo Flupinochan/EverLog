@@ -31,7 +31,13 @@ export const DEFAULT_SETTINGS: Settings = { recording: true };
  */
 export const SETTINGS_KEY = 'settings';
 
-/** `chrome.storage.local` のうち、設定の読み書きで使う部分。 */
+/**
+ * `chrome.storage.local` のうち、設定の読み書きで使う部分。
+ *
+ * これを受け取る引数は `storage` ではなく `area` と名付ける。`storage` という識別子は
+ * WXT の自動 import が `wxt/utils/storage` を差し込む対象であり、引数で影を作っていても
+ * 実際に取り込まれてバンドルに載る（背景・popup・DevTools の 3 つに約 9KB）。
+ */
 export interface SettingsStorageArea {
   get(key: string): Promise<Record<string, unknown>>;
   set(items: Record<string, unknown>): Promise<void>;
@@ -77,9 +83,9 @@ export function normalizeSettings(raw: unknown): Settings {
  * 設定が読めないことを理由に記録やバッジ表示が止まるより、既定値で動いたほうが
  * 実害が小さいため。
  */
-export async function loadSettings(storage: SettingsStorageArea): Promise<Settings> {
+export async function loadSettings(area: SettingsStorageArea): Promise<Settings> {
   try {
-    const stored = await storage.get(SETTINGS_KEY);
+    const stored = await area.get(SETTINGS_KEY);
     return normalizeSettings(stored[SETTINGS_KEY]);
   } catch (error) {
     console.error('[EverLog] failed to load settings', error);
@@ -94,12 +100,12 @@ export async function loadSettings(storage: SettingsStorageArea): Promise<Settin
  * 状態になるのを避けるため、呼び出し側に伝える。
  */
 export async function saveSettings(
-  storage: SettingsStorageArea,
+  area: SettingsStorageArea,
   patch: Partial<Settings>,
 ): Promise<Settings> {
-  const current = await loadSettings(storage);
+  const current = await loadSettings(area);
   const next = normalizeSettings({ ...current, ...patch });
-  await storage.set({ [SETTINGS_KEY]: next });
+  await area.set({ [SETTINGS_KEY]: next });
   return next;
 }
 

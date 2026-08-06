@@ -54,6 +54,8 @@ src/entrypoints/popup/（記録トグル・保存状況・全削除。HAR 出力
 
 **記録の停止は購読の解除で行う**（`startNetworkCapture()` の戻り値を呼ぶ）。ハンドラ側で捨てる作りに変えない。記録していない間も `getContent()` を呼んでボディを取りに行くことになるため。加えて保存の直前にも記録状態を確認する（解除前に始まった 1 件が後から届くため）。
 
+**DevTools ページの起動時は、設定を読み終える前から購読を張る。** 設定の読み込みを待ってから購読すると、ページの読み込み中に DevTools を開いた場合に最初の数件を取りこぼす。この間に拾った分は `saveEntry()` が初回読み込みの完了（`settingsReady`）を待ってから可否を判断する。この順序を入れ替えない。
+
 `addLog()` は `sanitizeEntry()` の戻り値である `SanitizedLogEntry` のみを受け取る。未サニタイズの `NetworkLogEntry` を保存する経路を型で塞ぐためであり、この型の区別をなくさない。
 
 ### UI（panel / popup）の層分け
@@ -91,6 +93,8 @@ bun run typecheck  # tsc --noEmit
 bun run test       # Vitest（1 回実行）
 bun run test:watch
 ```
+
+**`storage` という名前の変数・引数・props を作らない。** WXT の自動 import が `wxt/utils/storage` を差し込む対象であり、引数で影を作っていても実際に取り込まれてバンドルに載る（約 9KB が background・popup・DevTools の 3 つに乗る。実測で `background.js` が 1.37KB → 10.01KB）。`chrome.storage` を受け取る引数は `area` と名付ける。同じ理由で `browser` / `defineBackground` など WXT が自動 import する名前も避ける。ビルド出力のサイズが不自然に増えたときはこれを疑う。
 
 テストは Vitest を使う。`vitest.config.ts` で `WxtVitest()` を有効化しているため、テスト内でも WXT の自動 import・パスエイリアス・`browser` グローバルが解決される。`browser` API のモックが必要な場合は `wxt/testing/fake-browser` の `fakeBrowser` を使う（`@webext-core/fake-browser` は wxt の依存として同梱されている）。
 
