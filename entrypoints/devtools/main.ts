@@ -6,24 +6,18 @@
 
 import { browser } from 'wxt/browser';
 import { startNetworkCapture } from '@/lib/capture';
+import { addLog, clearAll, getBody, queryLogs } from '@/lib/db';
+import { sanitizeEntry } from '@/lib/sanitize';
 import type { NetworkLogEntry } from '@/lib/network-log';
 
-/** メモリ上に保持するエントリ数の上限。 */
-const MAX_BUFFERED_ENTRIES = 1000;
-
 /**
- * 直近のエントリを保持するリングバッファ。
+ * キャプチャしたエントリをサニタイズして保存する。
  *
- * 保存層はまだ無いため、キャプチャ結果はここに積むだけで外部へは出さない。
- * 次フェーズでは Service Worker への Port 送信に差し替える。
+ * サニタイズを通すのはここ 1 箇所だけであり、`addLog()` が `SanitizedLogEntry` しか
+ * 受け取らないため、素通しで保存する経路は型で塞がれている。
  */
-const entries: NetworkLogEntry[] = [];
-
-function bufferEntry(entry: NetworkLogEntry): void {
-  entries.push(entry);
-  if (entries.length > MAX_BUFFERED_ENTRIES) {
-    entries.splice(0, entries.length - MAX_BUFFERED_ENTRIES);
-  }
+async function saveEntry(entry: NetworkLogEntry): Promise<void> {
+  await addLog(sanitizeEntry(entry));
 }
 
 /**
@@ -58,9 +52,18 @@ browser.devtools.network.onNavigated.addListener((url) => {
 startNetworkCapture(
   browser.devtools.network,
   () => ({ tabId: browser.devtools.inspectedWindow.tabId, pageUrl }),
-  bufferEntry,
+  (entry) => {
+    // 1 件の保存失敗でキャプチャ全体を止めない
+    void saveEntry(entry).catch((error: unknown) => {
+      console.error('[EverLog] failed to save entry', entry.url, error);
+    });
+  },
 );
 
-// 保存層も UI も無い段階の手動確認用。DevTools ウィンドウを undock して
-// DevTools 自身の DevTools を開き、このハンドルからバッファを覗く。
-(globalThis as typeof globalThis & { everlogEntries?: NetworkLogEntry[] }).everlogEntries = entries;
+// UI が無い段階の手動確認用。DevTools ウィンドウを undock して DevTools 自身の
+// DevTools を開き、コンソールから everlog.queryLogs() などを呼ぶ。
+(globalThis as typeof globalThis & { everlog?: unknown }).everlog = {
+  queryLogs,
+  getBody,
+  clearAll,
+};

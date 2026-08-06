@@ -17,29 +17,26 @@ Chrome DevTools で観測したネットワークリクエスト／レスポン�
 ```
 entrypoints/devtools/main.ts（DevTools ページ・配線のみ）
   └─ lib/capture.ts（購読・getContent）
-       └─ lib/network-log.ts（HAR → エントリ変換・純粋関数）
-  └─ chrome.runtime.connect ─→ entrypoints/background.ts（サニタイズ → IndexedDB 保存 → 定期パージ）
+  │    └─ lib/network-log.ts（HAR → エントリ変換・純粋関数）
+  └─ lib/sanitize.ts（ヘッダー許可リスト・トークン除去）
+       └─ lib/db.ts（IndexedDB 保存・取得）
+entrypoints/background.ts（現状なにもしない）
 entrypoints/panel/（一覧・フィルタ・詳細表示）
 entrypoints/popup/（記録トグル・HAR 出力・設定）
 ```
 
-IndexedDB への書き込みは必ず Service Worker 側で行う。理由は API の制約ではない（DevTools ページは拡張機能のオリジンで動くため、技術的には同じ IndexedDB を直接開ける）。次の 3 点のためである。
+**保存に Service Worker を使わない。** DevTools ページは拡張機能のオリジンで動くため同じ IndexedDB を直接開けること、IndexedDB が複数コンテキストからの同時アクセスをトランザクションで直列化すること、サニタイズの集約は型で担保できることによる。Service Worker が唯一必須だった定期パージは要件から外した。Port の配線・メッセージの型定義・Service Worker の終了への耐性がまとめて不要になっている。この判断を覆す場合は README 4 章の検討を読むこと。
 
-- DevTools ページは DevTools ウィンドウが閉じると消えるため、定期パージ（`chrome.alarms`）を担えない。
-- DevTools はタブごとに開くため書き込み主体が複数になる。Service Worker は拡張機能に 1 つだけの共有コンテキストであり、書き込み口をここに収束させられる。
-- サニタイズを 1 箇所に集約する設計が、書き込み口が 1 本であることに依存している。
-
-**Service Worker は記録中でも終了しうる前提で書く。** Port を開いているだけではアイドルタイマーはリセットされない（Chrome 114 以降）。IndexedDB のハンドルをモジュールスコープで使い回さず、未書き込みのエントリをメモリ上に滞留させない。
+**メタデータ（`logs`）とボディ（`bodies`）は別ストアに分ける。** 一覧取得でボディをロードしないための分割であり、統合しない。`queryLogs()` は `bodies` を一切読まない。
 
 ### 実装状況
 
-- 実装済み：キャプチャ層（CAP-01 / 02 / 05 / 06 / 07）。取得したエントリは DevTools ページのメモリ上バッファに積むだけで、まだ保存も送信もしていない。
-- 実装済み：サニタイズ層（SAN-01〜05、`lib/sanitize.ts`）。ただし**まだどこからも呼ばれていない**。保存層を作るときに background の保存直前へ 1 箇所だけ差し込む。
-- 未実装：記録トグル（CAP-03）、URL フィルタ（CAP-04）、保存層、UI。
+- 実装済み：キャプチャ層（CAP-01 / 02 / 05 / 06 / 07）、サニタイズ層（SAN-01〜05）、保存層（保存・取得・ボディ取得・全削除）。DevTools ページで 3 層が繋がっており、ログは実際に永続化される。
+- 未実装：記録トグル（CAP-03）、URL フィルタ（CAP-04）、自動削除（保持期間・容量上限）、UI、HAR 変換。
 
 キャプチャ層は Chrome API を `startNetworkCapture()` の引数で受け取る。ブラウザなしでテストできる構造なので、この注入をやめない。
 
-保存層の API は `sanitizeEntry()` の戻り値である `SanitizedLogEntry` のみを受け取る形にする。未サニタイズの `NetworkLogEntry` を保存する経路を型で塞ぐためであり、この型の区別をなくさない。
+`addLog()` は `sanitizeEntry()` の戻り値である `SanitizedLogEntry` のみを受け取る。未サニタイズの `NetworkLogEntry` を保存する経路を型で塞ぐためであり、この型の区別をなくさない。
 
 ## 設計上の制約（変更しないこと）
 
@@ -74,7 +71,16 @@ bun run test:watch
 3. 任意のページで DevTools を開く
 4. ページをリロードしてリクエストを発生させる（DevTools を開く前のリクエストは記録されない）
 
-閲覧 UI ができるまでは、DevTools ウィンドウを別ウィンドウに切り離し（undock）、DevTools 自身に対して DevTools を開いて（`Ctrl+Shift+I`）、コンソールで `everlogEntries` を評価するとキャプチャ結果を確認できる。
+閲覧 UI ができるまでは、DevTools ウィンドウを別ウィンドウに切り離し（undock）、DevTools 自身に対して DevTools を開いて（`Ctrl+Shift+I`）、コンソールから確認する。
+
+```js
+await everlog.queryLogs()                        // 新しい順に取得（ボディは含まない）
+await everlog.queryLogs({ urlIncludes: 'api' })  // 絞り込み
+await everlog.getBody(1)                         // ボディを個別取得
+await everlog.clearAll()                         // 全削除
+```
+
+**DevTools を一度閉じてから開き直しても、閉じる前のログが残っていること**が本拡張機能の目的そのものなので、動作確認では必ずこれを見る。
 
 ## コーディング方針
 
