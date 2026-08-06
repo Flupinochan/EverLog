@@ -10,20 +10,24 @@ Chrome DevTools で観測したネットワークリクエスト／レスポン�
 
 詳細は仕様書（`README.md`）を参照。
 
-ビルドには WXT を使う。`entrypoints/` 配下のファイル名から manifest が自動生成されるため、`manifest.json` は直接編集しない（権限等は `wxt.config.ts` で宣言する）。
+ビルドには WXT を使う。`src/entrypoints/` 配下のファイル名から manifest が自動生成されるため、`manifest.json` は直接編集しない（権限等は `wxt.config.ts` で宣言する）。
 
 ## アーキテクチャ
 
 ```
-entrypoints/devtools/main.ts（DevTools ページ・配線のみ）
-  └─ lib/capture.ts（購読・getContent）
-  │    └─ lib/network-log.ts（HAR → エントリ変換・純粋関数）
-  └─ lib/sanitize.ts（ヘッダー許可リスト・トークン除去）
-       └─ lib/db.ts（IndexedDB 保存・取得）
-entrypoints/background.ts（現状なにもしない）
-entrypoints/panel/（一覧・フィルタ・詳細表示）
-entrypoints/popup/（記録トグル・HAR 出力・設定）
+src/entrypoints/devtools/main.ts（DevTools ページ・配線のみ）
+  └─ src/lib/capture.ts（購読・getContent）
+  │    └─ src/lib/network-log.ts（HAR → エントリ変換・純粋関数）
+  └─ src/lib/sanitize.ts（ヘッダー許可リスト・トークン除去）
+       └─ src/lib/db.ts（IndexedDB 保存・取得）
+src/entrypoints/background.ts（現状なにもしない）
+src/entrypoints/panel/（一覧・フィルタ・詳細表示）
+src/entrypoints/popup/（記録トグル・HAR 出力・設定）
 ```
+
+**本番用コードは `src/`、テストは `tests/` に分ける。** `wxt.config.ts` の `srcDir: 'src'` によりビルド対象は `src/` 配下だけになり、`vitest.config.ts` の `include` は `tests/**/*.test.ts` だけを拾う。テストファイルを `src/` に置かない（ビルド対象に混ざる）。`tests/` は `src/` のディレクトリ構造をそのまま写す（`src/lib/db.ts` → `tests/lib/db.test.ts`）。
+
+テストから本番用コードを参照するときは相対パスではなく `@/` エイリアスを使う（`@` は `src/` を指す）。
 
 **保存に Service Worker を使わない。** DevTools ページは拡張機能のオリジンで動くため同じ IndexedDB を直接開けること、IndexedDB が複数コンテキストからの同時アクセスをトランザクションで直列化すること、サニタイズの集約は型で担保できることによる。Service Worker が唯一必須だった定期パージは要件から外した。Port の配線・メッセージの型定義・Service Worker の終了への耐性がまとめて不要になっている。この判断を覆す場合は README 4 章の検討を読むこと。
 
@@ -63,6 +67,12 @@ bun run test:watch
 ```
 
 テストは Vitest を使う。`vitest.config.ts` で `WxtVitest()` を有効化しているため、テスト内でも WXT の自動 import・パスエイリアス・`browser` グローバルが解決される。`browser` API のモックが必要な場合は `wxt/testing/fake-browser` の `fakeBrowser` を使う（`@webext-core/fake-browser` は wxt の依存として同梱されている）。
+
+## CI
+
+`.github/workflows/ci.yml` が `main` への push と全 Pull Request で `bun run typecheck` → `bun run test` → `bun run build` を実行する。ローカルでこの 3 つが通ることを push 前に確認する。CI は依存のインストールに `bun ci`（= `bun install --frozen-lockfile`）を使うため、依存を変更したときは `bun.lock` も必ずコミットする。
+
+**GitHub Actions の Action は commit SHA で固定する。** タグは付け替え可能で上流の乗っ取りがそのまま CI に流れ込むため、`uses:` にタグやブランチを書かない。末尾に `# v7.0.1` のようなバージョンコメントを付け、更新時は `git ls-remote --tags <repo>` で SHA を取り直してコメントも合わせる。`permissions` はワークフロー既定で `contents: read` に絞る。
 
 ## 動作確認手順
 

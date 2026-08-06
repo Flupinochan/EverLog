@@ -10,7 +10,7 @@ import {
   type CaptureContext,
   type HarLikeEntry,
   type NetworkLogEntry,
-} from './network-log';
+} from '@/lib/network-log';
 
 const ctx: CaptureContext = { tabId: 42, pageUrl: 'https://example.com/app', now: 1_700_000_000_000 };
 

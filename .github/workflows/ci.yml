@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# 既定を最小権限にする。ここで絞らないとリポジトリ設定次第で write が付く。
+permissions:
+  contents: read
+
+# PR は新しい push があれば実行中のジョブを止める。
+# main への push はキャンセルしない（連続マージで先行コミットが
+# 緑にならないまま残り、どの時点まで通っていたか追えなくなる）。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: typecheck / test / build
+    runs-on: ubuntu-latest
+
+    steps:
+      # サードパーティ製 Action は commit SHA で固定する。
+      # タグは付け替え可能なため、タグ参照だと乗っ取られたコードが流れ込む。
+      # 更新時は `git ls-remote --tags <repo>` で SHA を取り直し、末尾コメントも合わせる。
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+
+      # bun ci は bun install --frozen-lockfile と同じ（bun.lock どおりに固定インストール）。
+      # postinstall の `wxt prepare` が .wxt/ の型とパスエイリアスを生成する。
+      # これが無いと typecheck が落ちるため、install は必ず最初に走らせる。
+      - name: Install dependencies
+        run: bun ci
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        run: bun run test
+
+      - name: Build
+        run: bun run build

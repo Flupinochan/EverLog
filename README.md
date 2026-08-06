@@ -141,7 +141,7 @@ Service Worker を挟まないことで、Port の配線・メッセージの型
 | SAN-02 | ヘッダー名正規化 | 比較前に小文字化する（`Authorization` / `authorization` の双方が実際に出現するため） |
 | SAN-03 | 除外対象ヘッダー | `authorization`、`cookie`、`set-cookie` を最低ラインとして許可リストに含めない |
 | SAN-04 | ボディ内トークン除去 | `Bearer …` / `Basic …`、JWT、`access_token` / `id_token` / `refresh_token` 等を `[REDACTED]` に置換する |
-| SAN-05 | URL 内トークン除去 | クエリパラメータ内の `access_token`、`id_token`、`api_key`、`token` 等を置換する |
+| SAN-05 | URL 内トークン除去 | クエリパラメータ内の `access_token`、`id_token`、`api_key`、`token` 等を置換する。フラグメント、URL 内の認証情報（`https://user:pass@host/`）、およびパスセグメントに埋め込まれた JWT（`/verify/eyJ…`）も対象とする |
 
 正規表現による除去は完全ではない。独自形式のトークンは検出できないため、機微な API は CAP-04 の段階で採取対象から除外する二段構えとする。
 
@@ -218,6 +218,8 @@ DevTools はタブごとに独立して開くため、DevTools ページも複�
 
 「リクエストは発生したがボディが残っていない」という事実自体が調査上の情報となるため、破棄しない。`bodyStatus` は `stored` / `too_large` / `mime_excluded` / `fetch_failed` のいずれかとする。
 
+`getContent()` はコールバックを一度も呼ばないことがある（リクエストの元になったコンテキストが失われた場合など）。待ち時間に上限を設けないと await が永久に止まり、メタデータごとエントリを取りこぼす。このため取得には 10 秒（`GET_CONTENT_TIMEOUT_MS`）の上限を設け、時間切れも `fetch_failed` として扱う。
+
 ---
 
 ## 7. データモデル
@@ -293,26 +295,55 @@ IndexedDB オブジェクトストア `logs`（キー：自動採番）
 
 ## 10. ファイル構成
 
-ビルドには WXT を用いる。`entrypoints/` 配下の配置から manifest が自動生成されるため、`manifest.json` は成果物であり、リポジトリには置かない。
+ビルドには WXT を用いる。`src/entrypoints/` 配下の配置から manifest が自動生成されるため、`manifest.json` は成果物であり、リポジトリには置かない。
+
+本番用コードは `src/`、テストは `tests/` に置き、フォルダで分離する。`wxt.config.ts` の `srcDir: 'src'` によってビルド対象は `src/` 配下に限定され、テストコードが拡張機能の成果物に混入しない。`tests/` は `src/` のディレクトリ構造をそのまま写す。
 
 ```
 /
-├── wxt.config.ts          # manifest の宣言（権限等）
-├── vitest.config.ts
-├── entrypoints/
-│   ├── devtools/
-│   │   ├── index.html     # devtools_page として登録される
-│   │   └── main.ts        # キャプチャ → サニタイズ → 保存 の配線
-│   ├── background.ts      # Service Worker（現状なにもしない）
-│   ├── panel/             # 閲覧 UI（未実装）
-│   └── popup/             # トグル・出力・設定（未実装）
-└── lib/
-    ├── network-log.ts     # データモデル + HAR → エントリ変換（純粋関数）
-    ├── capture.ts         # onRequestFinished 購読・getContent
-    ├── sanitize.ts        # ヘッダー許可リスト・トークン除去
-    ├── db.ts              # IndexedDB（保存・取得・全削除）
-    └── har.ts             # HAR 1.2 変換（未実装）
+├── .github/workflows/ci.yml   # typecheck / test / build（10.2）
+├── wxt.config.ts              # srcDir と manifest の宣言（権限等）
+├── vitest.config.ts           # include: tests/**/*.test.ts
+├── src/                       # 本番用コード（ビルド対象）
+│   ├── entrypoints/
+│   │   ├── devtools/
+│   │   │   ├── index.html     # devtools_page として登録される
+│   │   │   └── main.ts        # キャプチャ → サニタイズ → 保存 の配線
+│   │   ├── background.ts      # Service Worker（現状なにもしない）
+│   │   ├── panel/             # 閲覧 UI（未実装）
+│   │   └── popup/             # トグル・出力・設定（未実装）
+│   └── lib/
+│       ├── network-log.ts     # データモデル + HAR → エントリ変換（純粋関数）
+│       ├── capture.ts         # onRequestFinished 購読・getContent
+│       ├── sanitize.ts        # ヘッダー許可リスト・トークン除去
+│       ├── db.ts              # IndexedDB（保存・取得・全削除）
+│       └── har.ts             # HAR 1.2 変換（未実装）
+└── tests/                     # テストコード（ビルド対象外）
+    └── lib/
+        ├── network-log.test.ts
+        ├── capture.test.ts
+        ├── sanitize.test.ts
+        └── db.test.ts
 ```
+
+テストから本番用コードを参照するときは `@/` エイリアスを使う（`@` は `src/` を指す）。`tests/lib/db.test.ts` からは `import { addLog } from '@/lib/db'` と書く。`WxtVitest()` プラグインが WXT の生成した tsconfig からこのエイリアスを解決するため、Vitest 側に追加設定は要らない。
+
+### 10.2 CI
+
+`.github/workflows/ci.yml` が `main` への push・全 Pull Request・手動実行（`workflow_dispatch`）で以下を順に実行する。いずれかが失敗すればジョブが落ちる。
+
+| ステップ | コマンド | 目的 |
+| --- | --- | --- |
+| Install | `bun ci` | `bun.lock` どおりに固定インストール（`bun install --frozen-lockfile` と同じ。postinstall の `wxt prepare` が `.wxt/` の型とエイリアスを生成する） |
+| Typecheck | `bun run typecheck` | `tsc --noEmit` |
+| Test | `bun run test` | Vitest（`tests/` 配下） |
+| Build | `bun run build` | WXT ビルドが通ることの確認 |
+
+同一ブランチで新しい push があった場合、`concurrency` により実行中のジョブはキャンセルされる。
+
+**Action は commit SHA で固定する。** `actions/checkout@v7` のようなタグ参照は、タグが同じ名前のまま別のコミットへ付け替えられるため、上流が乗っ取られた場合にそのコードがそのまま CI で実行される。SHA は付け替えられないので、固定すれば取得内容が変わらない。可読性のために `# v7.0.1` のようなバージョンコメントを末尾に付け、更新時は `git ls-remote --tags <repo>` で SHA を取り直してコメントも合わせる。
+
+`permissions: contents: read` をワークフロー既定として宣言する。これを省くとリポジトリ設定次第で `GITHUB_TOKEN` に write 権限が付くため、明示的に絞る。
 
 ### manifest（骨子）
 

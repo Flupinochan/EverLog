@@ -6,6 +6,10 @@ import { WxtVitest } from 'wxt/testing/vitest-plugin';
 export default defineConfig({
   plugins: [WxtVitest()],
   test: {
+    // テストは tests/ 配下のみ。src/ には本番用コードだけを置く。
+    // .tsx も拾う（panel / popup の UI テストが増えたときに黙って
+    // スキップされ、それでも緑になるのを防ぐ）。
+    include: ['tests/**/*.test.{ts,tsx}'],
     setupFiles: ['fake-indexeddb/auto'],
   },
 });

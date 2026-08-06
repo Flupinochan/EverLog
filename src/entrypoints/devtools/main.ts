@@ -1,7 +1,7 @@
 /**
  * DevTools ページ。DevTools ウィンドウが開いている間だけ存在する。
  *
- * ここでの役割は配線のみ。実際のキャプチャ処理は `lib/capture.ts` にある。
+ * ここでの役割は配線のみ。実際のキャプチャ処理は `src/lib/capture.ts` にある。
  */
 
 import { browser } from 'wxt/browser';
