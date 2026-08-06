@@ -15,13 +15,18 @@ Chrome DevTools で観測したネットワークリクエスト／レスポン�
 ## アーキテクチャ
 
 ```
-src/entrypoints/devtools/main.ts（DevTools ページ・配線のみ）
+src/entrypoints/devtools/main.ts（DevTools ページ・配線とパネル登録のみ）
   └─ src/lib/capture.ts（購読・getContent）
   │    └─ src/lib/network-log.ts（HAR → エントリ変換・純粋関数）
   └─ src/lib/sanitize.ts（ヘッダー許可リスト・トークン除去）
        └─ src/lib/db.ts（IndexedDB 保存・取得）
 src/entrypoints/background.ts（現状なにもしない）
 src/entrypoints/panel/（一覧・フィルタ・詳細表示）
+  ├─ App.tsx（フックと表示コンポーネントの接続のみ）
+  ├─ components/（表示のみ。props を描くだけ）
+  ├─ hooks/（データ取得。LogSource を引数で受け取る）
+  └─ src/lib/panel-view.ts（フィルタ組み立て・整形の純粋関数）
+       └─ src/lib/log-source.ts（読み取り専用の保存層入口）
 src/entrypoints/popup/（記録トグル・HAR 出力・設定）
 ```
 
@@ -35,12 +40,22 @@ src/entrypoints/popup/（記録トグル・HAR 出力・設定）
 
 ### 実装状況
 
-- 実装済み：キャプチャ層（CAP-01 / 02 / 05 / 06 / 07）、サニタイズ層（SAN-01〜05）、保存層（保存・取得・ボディ取得・全削除）。DevTools ページで 3 層が繋がっており、ログは実際に永続化される。
-- 未実装：記録トグル（CAP-03）、URL フィルタ（CAP-04）、自動削除（保持期間・容量上限）、UI、HAR 変換。
+- 実装済み：キャプチャ層（CAP-01 / 02 / 05 / 06 / 07）、サニタイズ層（SAN-01〜05）、保存層（保存・取得・ボディ取得・全削除）、閲覧 UI（VIEW-01〜04）。DevTools ページで 3 層が繋がっており、記録されたログはパネルで一覧・絞り込み・詳細表示できる。
+- 未実装：記録トグル（CAP-03）、URL フィルタ（CAP-04）、自動削除（保持期間・容量上限）、popup（トグル・出力・設定）、HAR 変換。
 
 キャプチャ層は Chrome API を `startNetworkCapture()` の引数で受け取る。ブラウザなしでテストできる構造なので、この注入をやめない。
 
 `addLog()` は `sanitizeEntry()` の戻り値である `SanitizedLogEntry` のみを受け取る。未サニタイズの `NetworkLogEntry` を保存する経路を型で塞ぐためであり、この型の区別をなくさない。
+
+### 閲覧 UI（panel）の層分け
+
+**表示・データ取得・ロジックを混ぜない。** 後から Playwright / Storybook を差し込めるようにするための分離であり、まとめない。
+
+- `components/` は props を描くだけ。`db.ts` を import しない（型の import は可）。
+- データ取得は `hooks/` に閉じる。フックは `LogSource`（`src/lib/log-source.ts`）を引数で受け取り、差し替えれば実物の IndexedDB なしで描画できる。キャプチャ層と同じ注入方針。
+- 絞り込み条件の組み立てと整形は `src/lib/panel-view.ts` の純粋関数に置く。テストはここに書く（DOM 環境は未導入）。
+
+スタイリングは Tailwind CSS v4。設定ファイルは持たず、`panel/style.css` の `@import 'tailwindcss'` と `wxt.config.ts` の Vite プラグイン登録だけで動く。配色は `prefers-color-scheme` に追従させ、`dark:` を当てたときはネイティブ部品用に `color-scheme` も切り替える。
 
 ## 設計上の制約（変更しないこと）
 
@@ -80,8 +95,9 @@ bun run test:watch
 2. 「パッケージ化されていない拡張機能を読み込む」で `.output/chrome-mv3` を選択
 3. 任意のページで DevTools を開く
 4. ページをリロードしてリクエストを発生させる（DevTools を開く前のリクエストは記録されない）
+5. DevTools の「EverLog」パネルを開き、一覧・絞り込み・詳細表示を確認する
 
-閲覧 UI ができるまでは、DevTools ウィンドウを別ウィンドウに切り離し（undock）、DevTools 自身に対して DevTools を開いて（`Ctrl+Shift+I`）、コンソールから確認する。
+保存層を直接叩きたい場合は、DevTools ウィンドウを別ウィンドウに切り離し（undock）、DevTools 自身に対して DevTools を開いて（`Ctrl+Shift+I`）、コンソールから確認する。
 
 ```js
 await everlog.queryLogs()                        // 新しい順に取得（ボディは含まない）

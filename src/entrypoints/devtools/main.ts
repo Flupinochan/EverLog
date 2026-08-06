@@ -62,6 +62,10 @@ startNetworkCapture(
   (entry) => void saveEntry(entry),
 );
 
+// 閲覧 UI を DevTools のパネルとして登録する（README 6.1）。パネルのページは
+// ビルド結果のルートに `panel.html` として出力される。
+browser.devtools.panels.create('EverLog', '', 'panel.html');
+
 // UI が無い段階の手動確認用。DevTools ウィンドウを undock して DevTools 自身の
 // DevTools を開き、コンソールから everlog.queryLogs() などを呼ぶ。
 (globalThis as typeof globalThis & { everlog?: unknown }).everlog = {
