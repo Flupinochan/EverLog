@@ -332,12 +332,16 @@ IndexedDB オブジェクトストア `logs`（キー：自動採番）
 
 | ステップ | コマンド | 目的 |
 | --- | --- | --- |
-| Install | `bun install --frozen-lockfile` | `bun.lock` どおりに固定インストール（postinstall の `wxt prepare` が `.wxt/` の型とエイリアスを生成する） |
+| Install | `bun ci` | `bun.lock` どおりに固定インストール（`bun install --frozen-lockfile` と同じ。postinstall の `wxt prepare` が `.wxt/` の型とエイリアスを生成する） |
 | Typecheck | `bun run typecheck` | `tsc --noEmit` |
 | Test | `bun run test` | Vitest（`tests/` 配下） |
 | Build | `bun run build` | WXT ビルドが通ることの確認 |
 
-Bun のセットアップには `oven-sh/setup-bun` を用いる。同一ブランチで新しい push があった場合、`concurrency` により実行中のジョブはキャンセルされる。
+同一ブランチで新しい push があった場合、`concurrency` により実行中のジョブはキャンセルされる。
+
+**Action は commit SHA で固定する。** `actions/checkout@v7` のようなタグ参照は、タグが同じ名前のまま別のコミットへ付け替えられるため、上流が乗っ取られた場合にそのコードがそのまま CI で実行される。SHA は付け替えられないので、固定すれば取得内容が変わらない。可読性のために `# v7.0.1` のようなバージョンコメントを末尾に付け、更新時は `git ls-remote --tags <repo>` で SHA を取り直してコメントも合わせる。
+
+`permissions: contents: read` をワークフロー既定として宣言する。これを省くとリポジトリ設定次第で `GITHUB_TOKEN` に write 権限が付くため、明示的に絞る。
 
 ### manifest（骨子）
 

@@ -70,7 +70,9 @@ bun run test:watch
 
 ## CI
 
-`.github/workflows/ci.yml` が `main` への push と全 Pull Request で `bun run typecheck` → `bun run test` → `bun run build` を実行する。ローカルでこの 3 つが通ることを push 前に確認する。CI は `bun install --frozen-lockfile` を使うため、依存を変更したときは `bun.lock` も必ずコミットする。
+`.github/workflows/ci.yml` が `main` への push と全 Pull Request で `bun run typecheck` → `bun run test` → `bun run build` を実行する。ローカルでこの 3 つが通ることを push 前に確認する。CI は依存のインストールに `bun ci`（= `bun install --frozen-lockfile`）を使うため、依存を変更したときは `bun.lock` も必ずコミットする。
+
+**GitHub Actions の Action は commit SHA で固定する。** タグは付け替え可能で上流の乗っ取りがそのまま CI に流れ込むため、`uses:` にタグやブランチを書かない。末尾に `# v7.0.1` のようなバージョンコメントを付け、更新時は `git ls-remote --tags <repo>` で SHA を取り直してコメントも合わせる。`permissions` はワークフロー既定で `contents: read` に絞る。
 
 ## 動作確認手順
 
