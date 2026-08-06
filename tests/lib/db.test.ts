@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { addLog, clearAll, getBody, queryLogs } from './db';
-import { sanitizeEntry, type SanitizedLogEntry } from './sanitize';
-import type { NetworkLogEntry } from './network-log';
+import { addLog, clearAll, getBody, queryLogs } from '@/lib/db';
+import { sanitizeEntry, type SanitizedLogEntry } from '@/lib/sanitize';
+import type { NetworkLogEntry } from '@/lib/network-log';
 
 /**
  * 保存対象は必ずサニタイズ層を通す。`addLog` が `SanitizedLogEntry` しか受け取らないため、

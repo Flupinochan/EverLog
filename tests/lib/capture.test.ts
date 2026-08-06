@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { startNetworkCapture, type CapturedRequest, type NetworkCaptureApi } from './capture';
-import type { CaptureContext, HarLikeEntry, NetworkLogEntry } from './network-log';
+import { startNetworkCapture, type CapturedRequest, type NetworkCaptureApi } from '@/lib/capture';
+import type { CaptureContext, HarLikeEntry, NetworkLogEntry } from '@/lib/network-log';
 
 /** テストからリスナーを任意に発火できる `onRequestFinished` のフェイク。 */
 function createFakeApi() {

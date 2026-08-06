@@ -293,26 +293,51 @@ IndexedDB オブジェクトストア `logs`（キー：自動採番）
 
 ## 10. ファイル構成
 
-ビルドには WXT を用いる。`entrypoints/` 配下の配置から manifest が自動生成されるため、`manifest.json` は成果物であり、リポジトリには置かない。
+ビルドには WXT を用いる。`src/entrypoints/` 配下の配置から manifest が自動生成されるため、`manifest.json` は成果物であり、リポジトリには置かない。
+
+本番用コードは `src/`、テストは `tests/` に置き、フォルダで分離する。`wxt.config.ts` の `srcDir: 'src'` によってビルド対象は `src/` 配下に限定され、テストコードが拡張機能の成果物に混入しない。`tests/` は `src/` のディレクトリ構造をそのまま写す。
 
 ```
 /
-├── wxt.config.ts          # manifest の宣言（権限等）
-├── vitest.config.ts
-├── entrypoints/
-│   ├── devtools/
-│   │   ├── index.html     # devtools_page として登録される
-│   │   └── main.ts        # キャプチャ → サニタイズ → 保存 の配線
-│   ├── background.ts      # Service Worker（現状なにもしない）
-│   ├── panel/             # 閲覧 UI（未実装）
-│   └── popup/             # トグル・出力・設定（未実装）
-└── lib/
-    ├── network-log.ts     # データモデル + HAR → エントリ変換（純粋関数）
-    ├── capture.ts         # onRequestFinished 購読・getContent
-    ├── sanitize.ts        # ヘッダー許可リスト・トークン除去
-    ├── db.ts              # IndexedDB（保存・取得・全削除）
-    └── har.ts             # HAR 1.2 変換（未実装）
+├── .github/workflows/ci.yml   # typecheck / test / build（10.2）
+├── wxt.config.ts              # srcDir と manifest の宣言（権限等）
+├── vitest.config.ts           # include: tests/**/*.test.ts
+├── src/                       # 本番用コード（ビルド対象）
+│   ├── entrypoints/
+│   │   ├── devtools/
+│   │   │   ├── index.html     # devtools_page として登録される
+│   │   │   └── main.ts        # キャプチャ → サニタイズ → 保存 の配線
+│   │   ├── background.ts      # Service Worker（現状なにもしない）
+│   │   ├── panel/             # 閲覧 UI（未実装）
+│   │   └── popup/             # トグル・出力・設定（未実装）
+│   └── lib/
+│       ├── network-log.ts     # データモデル + HAR → エントリ変換（純粋関数）
+│       ├── capture.ts         # onRequestFinished 購読・getContent
+│       ├── sanitize.ts        # ヘッダー許可リスト・トークン除去
+│       ├── db.ts              # IndexedDB（保存・取得・全削除）
+│       └── har.ts             # HAR 1.2 変換（未実装）
+└── tests/                     # テストコード（ビルド対象外）
+    └── lib/
+        ├── network-log.test.ts
+        ├── capture.test.ts
+        ├── sanitize.test.ts
+        └── db.test.ts
 ```
+
+テストから本番用コードを参照するときは `@/` エイリアスを使う（`@` は `src/` を指す）。`tests/lib/db.test.ts` からは `import { addLog } from '@/lib/db'` と書く。`WxtVitest()` プラグインが WXT の生成した tsconfig からこのエイリアスを解決するため、Vitest 側に追加設定は要らない。
+
+### 10.2 CI
+
+`.github/workflows/ci.yml` が `main` への push・全 Pull Request・手動実行（`workflow_dispatch`）で以下を順に実行する。いずれかが失敗すればジョブが落ちる。
+
+| ステップ | コマンド | 目的 |
+| --- | --- | --- |
+| Install | `bun install --frozen-lockfile` | `bun.lock` どおりに固定インストール（postinstall の `wxt prepare` が `.wxt/` の型とエイリアスを生成する） |
+| Typecheck | `bun run typecheck` | `tsc --noEmit` |
+| Test | `bun run test` | Vitest（`tests/` 配下） |
+| Build | `bun run build` | WXT ビルドが通ることの確認 |
+
+Bun のセットアップには `oven-sh/setup-bun` を用いる。同一ブランチで新しい push があった場合、`concurrency` により実行中のジョブはキャンセルされる。
 
 ### manifest（骨子）
 

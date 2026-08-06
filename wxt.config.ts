@@ -2,6 +2,8 @@ import { defineConfig } from 'wxt';
 
 // See https://wxt.dev/api/config.html
 export default defineConfig({
+  // 本番用コードは src/ 配下のみ。テストは tests/ に置き、ビルド対象から外す。
+  srcDir: 'src',
   modules: ['@wxt-dev/module-react'],
   manifest: {
     name: 'EverLog',

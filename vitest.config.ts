@@ -6,6 +6,8 @@ import { WxtVitest } from 'wxt/testing/vitest-plugin';
 export default defineConfig({
   plugins: [WxtVitest()],
   test: {
+    // テストは tests/ 配下のみ。src/ には本番用コードだけを置く。
+    include: ['tests/**/*.test.ts'],
     setupFiles: ['fake-indexeddb/auto'],
   },
 });

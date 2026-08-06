@@ -6,8 +6,8 @@ import {
   sanitizeEntry,
   sanitizeHeaders,
   sanitizeUrl,
-} from './sanitize';
-import type { NetworkLogEntry } from './network-log';
+} from '@/lib/sanitize';
+import type { NetworkLogEntry } from '@/lib/network-log';
 
 /** 実在の形に近い JWT（署名部分はダミー）。 */
 const JWT =
