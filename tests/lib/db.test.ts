@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { addLog, clearAll, getBody, queryLogs } from '@/lib/db';
+import { addLog, clearAll, getBody, getStats, queryLogs } from '@/lib/db';
 import { sanitizeEntry, type SanitizedLogEntry } from '@/lib/sanitize';
 import type { NetworkLogEntry } from '@/lib/network-log';
 
@@ -242,6 +242,37 @@ describe('getBody', () => {
 
     expect(await getBody(first)).toBe('first');
     expect(await getBody(second)).toBe('second');
+  });
+});
+
+describe('getStats', () => {
+  it('保存前は 0 件・0 バイト', async () => {
+    expect(await getStats()).toEqual({ count: 0, bodyBytes: 0 });
+  });
+
+  it('保存したボディのサイズを合計する', async () => {
+    await addLog(sanitized({ body: 'a', bodySize: 100, bodyStatus: 'stored' }));
+    await addLog(sanitized({ body: 'b', bodySize: 250, bodyStatus: 'stored' }));
+
+    expect(await getStats()).toEqual({ count: 2, bodyBytes: 350 });
+  });
+
+  it('ボディを保存していないエントリは件数だけ数える', async () => {
+    // 元のレスポンスは大きくても保存していないため、容量には数えない
+    await addLog(sanitized({ body: null, bodySize: 9_000, bodyStatus: 'too_large' }));
+    await addLog(sanitized({ body: null, bodySize: 500, bodyStatus: 'mime_excluded' }));
+    await addLog(sanitized({ body: null, bodySize: 300, bodyStatus: 'fetch_failed' }));
+    await addLog(sanitized({ body: 'kept', bodySize: 40, bodyStatus: 'stored' }));
+
+    expect(await getStats()).toEqual({ count: 4, bodyBytes: 40 });
+  });
+
+  it('全削除の後は 0 に戻る', async () => {
+    await addLog(sanitized({ body: 'payload', bodySize: 7, bodyStatus: 'stored' }));
+
+    await clearAll();
+
+    expect(await getStats()).toEqual({ count: 0, bodyBytes: 0 });
   });
 });
 
