@@ -41,19 +41,36 @@ export interface GetContentResult {
 }
 
 /**
+ * `getContent()` の応答を待つ上限（ミリ秒）。
+ *
+ * `getContent()` はコールバックを一度も呼ばないことがある（リクエストの元になった
+ * コンテキストが失われた場合など）。上限が無いと await が永久に止まり、
+ * メタデータごとエントリを取りこぼす。仕様書 6.4 は取得失敗でもメタデータは
+ * 残すと定めているため、時間切れは失敗として扱う。
+ */
+export const GET_CONTENT_TIMEOUT_MS = 10_000;
+
+/**
  * コールバック形式の `getContent()` を Promise でラップする。
  *
  * 取得失敗は例外にせず `content: null` として返し、呼び出し側で
  * `bodyStatus: 'fetch_failed'` に落とす（エントリ自体は捨てない）。
+ * コールバックが呼ばれない場合も `timeoutMs` 経過で同じ扱いにする。
  */
-export function getContentAsync(request: CapturedRequest): Promise<GetContentResult> {
+export function getContentAsync(
+  request: CapturedRequest,
+  timeoutMs: number = GET_CONTENT_TIMEOUT_MS,
+): Promise<GetContentResult> {
   return new Promise((resolve) => {
     let settled = false;
-    const settle = (result: GetContentResult): void => {
+    const timer = setTimeout(() => settle({ content: null, encoding: '' }), timeoutMs);
+
+    function settle(result: GetContentResult): void {
       if (settled) return;
       settled = true;
+      clearTimeout(timer);
       resolve(result);
-    };
+    }
 
     try {
       request.getContent((content, encoding) => {

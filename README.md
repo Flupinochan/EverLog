@@ -141,7 +141,7 @@ Service Worker を挟まないことで、Port の配線・メッセージの型
 | SAN-02 | ヘッダー名正規化 | 比較前に小文字化する（`Authorization` / `authorization` の双方が実際に出現するため） |
 | SAN-03 | 除外対象ヘッダー | `authorization`、`cookie`、`set-cookie` を最低ラインとして許可リストに含めない |
 | SAN-04 | ボディ内トークン除去 | `Bearer …` / `Basic …`、JWT、`access_token` / `id_token` / `refresh_token` 等を `[REDACTED]` に置換する |
-| SAN-05 | URL 内トークン除去 | クエリパラメータ内の `access_token`、`id_token`、`api_key`、`token` 等を置換する |
+| SAN-05 | URL 内トークン除去 | クエリパラメータ内の `access_token`、`id_token`、`api_key`、`token` 等を置換する。フラグメント、URL 内の認証情報（`https://user:pass@host/`）、およびパスセグメントに埋め込まれた JWT（`/verify/eyJ…`）も対象とする |
 
 正規表現による除去は完全ではない。独自形式のトークンは検出できないため、機微な API は CAP-04 の段階で採取対象から除外する二段構えとする。
 
@@ -217,6 +217,8 @@ DevTools はタブごとに独立して開くため、DevTools ページも複�
 **メタデータのみ保存し、`bodyStatus` フィールドに理由を記録する。**
 
 「リクエストは発生したがボディが残っていない」という事実自体が調査上の情報となるため、破棄しない。`bodyStatus` は `stored` / `too_large` / `mime_excluded` / `fetch_failed` のいずれかとする。
+
+`getContent()` はコールバックを一度も呼ばないことがある（リクエストの元になったコンテキストが失われた場合など）。待ち時間に上限を設けないと await が永久に止まり、メタデータごとエントリを取りこぼす。このため取得には 10 秒（`GET_CONTENT_TIMEOUT_MS`）の上限を設け、時間切れも `fetch_failed` として扱う。
 
 ---
 

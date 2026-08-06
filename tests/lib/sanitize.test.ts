@@ -157,6 +157,29 @@ describe('sanitizeUrl', () => {
     );
   });
 
+  it('パスセグメントに埋め込まれた JWT を伏せる（キー名が無くても形で判定する）', () => {
+    const result = sanitizeUrl(`https://api.example.com/verify/${JWT}/status`);
+
+    expect(result).toBe(`https://api.example.com/verify/${REDACTED}/status`);
+    expect(result).not.toContain('eyJ');
+  });
+
+  it('相対 URL のパスに埋め込まれた JWT も伏せる', () => {
+    expect(sanitizeUrl(`/verify/${JWT}`)).toBe(`/verify/${REDACTED}`);
+  });
+
+  it('同名キーが重複していても両方伏せる（2 つ目を消さない）', () => {
+    const result = sanitizeUrl('https://api.example.com/x?token=aaa&keep=1&token=bbb');
+
+    expect(result).toBe(`https://api.example.com/x?token=${REDACTED}&keep=1&token=${REDACTED}`);
+  });
+
+  it('伏せ字化しないキーの重複は並び順ごと保つ', () => {
+    const result = sanitizeUrl('https://api.example.com/x?tag=a&tag=b&token=z');
+
+    expect(result).toBe(`https://api.example.com/x?tag=a&tag=b&token=${REDACTED}`);
+  });
+
   it('空文字はそのまま返す', () => {
     expect(sanitizeUrl('')).toBe('');
   });
@@ -210,6 +233,17 @@ describe('sanitizeBody', () => {
     expect(result).not.toContain('eyJ');
 
     expect(sanitizeBody('Basic dXNlcjpwYXNzd29yZA==')).toBe(`Basic ${REDACTED}`);
+  });
+
+  it('スキームとトークンの区切りがタブや改行でも値を残さない', () => {
+    // 区切りを ' ' 決め打ちで探すと、トークン末尾 1 文字だけが落ちた
+    // ほぼ生の値が保存される
+    for (const separator of ['\t', '\n', '  ', ' \t ']) {
+      const result = sanitizeBody(`Bearer${separator}abcDEF123456789secret`);
+
+      expect(result).toBe(`Bearer ${REDACTED}`);
+      expect(result).not.toContain('secre');
+    }
   });
 
   it('裸の JWT を伏せる', () => {

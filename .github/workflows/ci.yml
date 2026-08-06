@@ -10,10 +10,12 @@ on:
 permissions:
   contents: read
 
-# 同一ブランチで新しい push があれば実行中のジョブを止める
+# PR は新しい push があれば実行中のジョブを止める。
+# main への push はキャンセルしない（連続マージで先行コミットが
+# 緑にならないまま残り、どの時点まで通っていたか追えなくなる）。
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:

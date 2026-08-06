@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { startNetworkCapture, type CapturedRequest, type NetworkCaptureApi } from '@/lib/capture';
+import {
+  GET_CONTENT_TIMEOUT_MS,
+  getContentAsync,
+  startNetworkCapture,
+  type CapturedRequest,
+  type NetworkCaptureApi,
+} from '@/lib/capture';
 import type { CaptureContext, HarLikeEntry, NetworkLogEntry } from '@/lib/network-log';
 
 /** テストからリスナーを任意に発火できる `onRequestFinished` のフェイク。 */
@@ -32,6 +38,8 @@ interface FakeRequestOptions {
   encoding?: string;
   /** getContent が同期例外を投げる */
   throws?: boolean;
+  /** getContent がコールバックを一度も呼ばない（応答が返らないケース） */
+  neverCallsBack?: boolean;
   /** getContent が呼ばれた回数を記録する */
   onGetContent?: () => void;
 }
@@ -57,6 +65,7 @@ function createFakeRequest(options: FakeRequestOptions = {}): CapturedRequest {
     getContent(callback) {
       options.onGetContent?.();
       if (options.throws) throw new Error('getContent failed');
+      if (options.neverCallsBack) return;
       // Chrome の実 API と同様、コールバックは非同期に呼ばれる想定
       queueMicrotask(() => {
         callback(options.content as string, options.encoding ?? '');
@@ -160,6 +169,26 @@ describe('startNetworkCapture', () => {
     expect(entry.bodyStatus).toBe('fetch_failed');
   });
 
+  it('getContent がコールバックを呼ばないままでも、時間切れで fetch_failed として渡す', async () => {
+    vi.useFakeTimers();
+    try {
+      const fake = createFakeApi();
+      const request = createFakeRequest({ neverCallsBack: true });
+
+      const pending = captureOnce(fake.api, () => fake.emit(request));
+      await vi.advanceTimersByTimeAsync(GET_CONTENT_TIMEOUT_MS);
+      const entry = await pending;
+
+      // メタデータは残す（仕様書 6.4）。エントリごと取りこぼさない
+      expect(entry.bodyStatus).toBe('fetch_failed');
+      expect(entry.body).toBeNull();
+      expect(entry.url).toBe('https://api.example.com/items');
+      expect(entry.status).toBe(201);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('リクエストごとに context を取り直す（ページ遷移に追従する）', async () => {
     const fake = createFakeApi();
     const entries: NetworkLogEntry[] = [];
@@ -197,5 +226,37 @@ describe('startNetworkCapture', () => {
     fake.emit(createFakeRequest({ content: '{}' }));
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(handler).not.toHaveBeenCalled();
+  });
+});
+
+describe('getContentAsync', () => {
+  it('コールバックが呼ばれなければ時間切れで content: null に解決する', async () => {
+    const request = createFakeRequest({ neverCallsBack: true });
+
+    await expect(getContentAsync(request, 5)).resolves.toEqual({ content: null, encoding: '' });
+  });
+
+  it('コールバックが呼ばれれば時間切れを待たずに解決する', async () => {
+    const request = createFakeRequest({ content: '{"ok":true}', encoding: '' });
+
+    await expect(getContentAsync(request, GET_CONTENT_TIMEOUT_MS)).resolves.toEqual({
+      content: '{"ok":true}',
+      encoding: '',
+    });
+  });
+
+  it('時間切れ後にコールバックが遅れて呼ばれても二重解決しない', async () => {
+    let late: ((content: string, encoding: string) => void) | undefined;
+    const request: CapturedRequest = {
+      ...createFakeRequest(),
+      getContent(callback) {
+        late = callback;
+      },
+    };
+
+    const result = await getContentAsync(request, 5);
+    expect(result.content).toBeNull();
+
+    expect(() => late?.('{"late":true}', '')).not.toThrow();
   });
 });

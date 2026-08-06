@@ -142,15 +142,27 @@ function looksLikeJwt(value: string): boolean {
 
 /** `URLSearchParams` 内の該当キーを伏せる。置換したら true を返す。 */
 function redactSearchParams(params: URLSearchParams, redactKeys: Set<string>): boolean {
+  const entries = Array.from(params.entries());
   let changed = false;
-  for (const [key, value] of Array.from(params.entries())) {
-    if (value === '' || value === REDACTED) continue;
+
+  const redacted = entries.map<[string, string]>(([key, value]) => {
+    if (value === '' || value === REDACTED) return [key, value];
     if (isRedactKey(key, redactKeys) || looksLikeJwt(value)) {
-      params.set(key, REDACTED);
       changed = true;
+      return [key, REDACTED];
     }
-  }
-  return changed;
+    return [key, value];
+  });
+
+  if (!changed) return false;
+
+  // `params.set()` は同名キーの 2 つ目以降を削除してしまい、
+  // `?token=a&token=b` が伏せ字化ではなく欠落になる。全消し → 再追加で
+  // 重複と並び順をそのまま保つ。
+  for (const [key] of entries) params.delete(key);
+  for (const [key, value] of redacted) params.append(key, value);
+
+  return true;
 }
 
 /**
@@ -158,6 +170,7 @@ function redactSearchParams(params: URLSearchParams, redactKeys: Set<string>): b
  *
  * クエリに加え、OAuth implicit flow でトークンが載るフラグメントと、
  * URL 内の認証情報（`https://user:pass@host/`）も対象にする。
+ * パスセグメントに埋め込まれた JWT（`/verify/eyJ...`）も対象にする。
  *
  * 何も置換しなかった場合は入力文字列をそのまま返す。URL は保存層のインデックス
  * キー（STO-02）でもあるため、エスケープ表現を不用意に変えない。
@@ -170,14 +183,23 @@ export function sanitizeUrl(url: string, options: SanitizeOptions = DEFAULT_SANI
   try {
     parsed = new URL(url);
   } catch {
-    // 相対 URL などパースできないものは正規表現でフォールバック処理する
-    return redactQueryLikeString(url, redactKeys);
+    // 相対 URL などパースできないものは正規表現でフォールバック処理する。
+    // パス中の裸の JWT はキー＝値の形を取らないため、別途置換する。
+    return redactQueryLikeString(url, redactKeys).replace(JWT_PATTERN, REDACTED);
   }
 
   let changed = false;
 
   if (parsed.password) {
     parsed.password = '';
+    changed = true;
+  }
+
+  // パスセグメントの JWT（`/verify/eyJ...`）。クエリと違いキー名が無いので
+  // 形で判定するしかない。
+  const redactedPath = parsed.pathname.replace(JWT_PATTERN, REDACTED);
+  if (redactedPath !== parsed.pathname) {
+    parsed.pathname = redactedPath;
     changed = true;
   }
 
@@ -237,10 +259,10 @@ export function sanitizeBody(
   result = redactQueryLikeString(result, redactKeys);
 
   // 3. Bearer / Basic（スキームは残す）
-  result = result.replace(AUTH_SCHEME_PATTERN, (match) => {
-    const scheme = match.slice(0, match.indexOf(' '));
-    return `${scheme} ${REDACTED}`;
-  });
+  // スキームは正規表現の捕捉グループから取る。マッチ文字列を ' ' で切ると、
+  // 区切りがタブや改行のとき indexOf が -1 を返してトークン末尾 1 文字だけが
+  // 落ちた値（= ほぼ生のトークン）が保存されてしまう。
+  result = result.replace(AUTH_SCHEME_PATTERN, (_match, scheme: string) => `${scheme} ${REDACTED}`);
 
   // 4. 上記に当てはまらない裸の JWT
   result = result.replace(JWT_PATTERN, REDACTED);
