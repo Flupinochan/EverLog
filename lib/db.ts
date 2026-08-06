@@ -66,10 +66,15 @@ function txDone(tx: IDBTransaction): Promise<void> {
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
+/** キャッシュしている接続を捨てる。次回の呼び出しで開き直す。 */
+function invalidate(opening: Promise<IDBDatabase>): void {
+  if (dbPromise === opening) dbPromise = null;
+}
+
 function openDatabase(): Promise<IDBDatabase> {
   if (dbPromise !== null) return dbPromise;
 
-  dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
+  const opening = new Promise<IDBDatabase>((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
 
     req.onupgradeneeded = () => {
@@ -85,16 +90,34 @@ function openDatabase(): Promise<IDBDatabase> {
       }
     };
 
-    req.onsuccess = () => resolve(req.result);
+    // 他のコンテキスト（別タブの DevTools ページ）が古いバージョンの接続を保持していると
+    // ここで待たされる。相手側の onversionchange が接続を閉じれば解消する。
+    req.onblocked = () => {
+      console.warn('[EverLog] IndexedDB upgrade is blocked by another open connection');
+    };
+
+    req.onsuccess = () => {
+      const db = req.result;
+
+      // 他のコンテキストがバージョンを上げようとしたら、こちらの接続を閉じて道を空ける。
+      // 閉じた接続を掴み続けないよう、キャッシュも捨てて次回に開き直させる。
+      db.onversionchange = () => {
+        db.close();
+        invalidate(opening);
+      };
+      // ブラウザ側の都合で強制的に閉じられた場合も同様
+      db.onclose = () => invalidate(opening);
+
+      resolve(db);
+    };
     req.onerror = () => reject(req.error ?? new Error('Failed to open IndexedDB'));
   });
 
+  dbPromise = opening;
   // 失敗したハンドルを掴み続けないよう、次回の呼び出しで開き直せるようにする
-  dbPromise.catch(() => {
-    dbPromise = null;
-  });
+  opening.catch(() => invalidate(opening));
 
-  return dbPromise;
+  return opening;
 }
 
 /** 接続を閉じる。主にテストで使う。 */
@@ -139,8 +162,14 @@ export async function addLog(entry: SanitizedLogEntry): Promise<number> {
 
 function matchesFilter(log: StoredLog, filter: LogFilter, urlNeedle: string | null): boolean {
   if (filter.tabId !== undefined && log.tabId !== filter.tabId) return false;
-  if (filter.host !== undefined && log.host !== filter.host) return false;
-  if (filter.method !== undefined && log.method !== filter.method) return false;
+  // ホストは `new URL()` が小文字化し、メソッドは HAR が大文字で返す。呼び出し側に
+  // その表記を要求しないよう、どちらも揃えてから比較する。
+  if (filter.host !== undefined && log.host.toLowerCase() !== filter.host.toLowerCase()) {
+    return false;
+  }
+  if (filter.method !== undefined && log.method.toUpperCase() !== filter.method.toUpperCase()) {
+    return false;
+  }
   if (filter.status !== undefined && log.status !== filter.status) return false;
   if (urlNeedle !== null && !log.url.toLowerCase().includes(urlNeedle)) return false;
   return true;
@@ -162,9 +191,13 @@ function buildTimeRange(filter: LogFilter): IDBKeyRange | null {
  * 絞り、残りの条件はカーソル内で判定する（URL 部分一致はインデックスで表現できないため）。
  */
 export async function queryLogs(filter: LogFilter = {}): Promise<StoredLog[]> {
+  const limit = filter.limit;
+  if (limit !== undefined && limit <= 0) return [];
+  // 逆転した期間は該当なし。`IDBKeyRange.bound()` は from > to で例外を投げるため先に弾く
+  if (filter.from !== undefined && filter.to !== undefined && filter.from > filter.to) return [];
+
   const db = await openDatabase();
   const urlNeedle = filter.urlIncludes?.toLowerCase() ?? null;
-  const limit = filter.limit;
 
   const tx = db.transaction(LOG_STORE, 'readonly');
   const cursorRequest = tx

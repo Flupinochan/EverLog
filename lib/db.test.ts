@@ -196,6 +196,33 @@ describe('queryLogs', () => {
     expect(logs.map((log) => log.ts)).toEqual([100]);
   });
 
+  it('limit が 0 以下なら空配列を返す', async () => {
+    await addLog(sanitized());
+
+    expect(await queryLogs({ limit: 0 })).toEqual([]);
+    expect(await queryLogs({ limit: -1 })).toEqual([]);
+  });
+
+  it('期間が逆転していても例外にせず空配列を返す', async () => {
+    await addLog(sanitized({ ts: 200 }));
+
+    expect(await queryLogs({ from: 300, to: 100 })).toEqual([]);
+  });
+
+  it('host の比較で大文字小文字を無視する', async () => {
+    await addLog(sanitized({ url: 'https://API.Example.com/x' }));
+
+    expect(await queryLogs({ host: 'API.Example.com' })).toHaveLength(1);
+    expect(await queryLogs({ host: 'api.example.com' })).toHaveLength(1);
+  });
+
+  it('method の比較で大文字小文字を無視する', async () => {
+    await addLog(sanitized({ method: 'POST' }));
+
+    expect(await queryLogs({ method: 'post' })).toHaveLength(1);
+    expect(await queryLogs({ method: 'POST' })).toHaveLength(1);
+  });
+
   it('該当が無ければ空配列を返す', async () => {
     await addLog(sanitized());
 

@@ -17,7 +17,14 @@ import type { NetworkLogEntry } from '@/lib/network-log';
  * 受け取らないため、素通しで保存する経路は型で塞がれている。
  */
 async function saveEntry(entry: NetworkLogEntry): Promise<void> {
-  await addLog(sanitizeEntry(entry));
+  const sanitized = sanitizeEntry(entry);
+  try {
+    await addLog(sanitized);
+  } catch (error) {
+    // 1 件の保存失敗でキャプチャ全体を止めない。
+    // 出力する URL はサニタイズ後のものに限る（生の URL にはトークンが載りうるため）
+    console.error('[EverLog] failed to save entry', sanitized.url, error);
+  }
 }
 
 /**
@@ -52,12 +59,7 @@ browser.devtools.network.onNavigated.addListener((url) => {
 startNetworkCapture(
   browser.devtools.network,
   () => ({ tabId: browser.devtools.inspectedWindow.tabId, pageUrl }),
-  (entry) => {
-    // 1 件の保存失敗でキャプチャ全体を止めない
-    void saveEntry(entry).catch((error: unknown) => {
-      console.error('[EverLog] failed to save entry', entry.url, error);
-    });
-  },
+  (entry) => void saveEntry(entry),
 );
 
 // UI が無い段階の手動確認用。DevTools ウィンドウを undock して DevTools 自身の
