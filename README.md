@@ -59,7 +59,7 @@ Chrome 拡張機能でレスポンスボディを取得できる API は 2 つ�
 | 取りこぼし | DevTools を開く前のリクエスト | attach 前のリクエスト |
 | コード形式 | コールバックのみ | Promise 対応 |
 | データ形式 | HAR エントリ形式 | CDP 生イベント |
-| Service Worker 維持 | Port 経由のメッセージ流入で維持 | デバッガーセッションが維持（Chrome 116〜） |
+| Service Worker 維持 | メッセージ流入中のみ維持（Port を開くだけでは維持されない） | デバッガーセッションが維持（Chrome 116〜） |
 | タブ管理コード | 不要 | 必要（attach / detach の管理） |
 | 実装難度 | 低 | 高 |
 
@@ -84,33 +84,36 @@ Chrome 拡張機能でレスポンスボディを取得できる API は 2 つ�
 ## 4. アーキテクチャ
 
 ```
-┌──────────────────────────┐
-│ DevTools ウィンドウ        │
-│  ┌────────────────────┐  │
-│  │ devtools.js         │  │  onRequestFinished → getContent()
-│  │ （キャプチャ層）      │  │
-│  └─────────┬──────────┘  │
-│  ┌─────────┴──────────┐  │
-│  │ panel.html/js       │  │  一覧・フィルタ・詳細表示
-│  │ （閲覧 UI）          │  │
-│  └────────────────────┘  │
-└───────────┬──────────────┘
-            │ chrome.runtime.connect（Port）
-            ▼
-┌──────────────────────────┐
-│ Service Worker            │
-│  サニタイズ層             │  ヘッダー許可リスト / トークン除去
-│  保存層                   │  IndexedDB 書き込み
-│  パージ層                 │  chrome.alarms による定期削除
-└───────────┬──────────────┘
-            │
-            ▼
-      ┌───────────┐        ┌──────────────┐
-      │ IndexedDB │◄───────┤ popup.html    │  トグル・出力・全削除
-      └───────────┘        └──────────────┘
+┌────────────────────────────────────┐
+│ DevTools ウィンドウ                  │
+│  ┌──────────────────────────────┐  │
+│  │ devtools/main.ts              │  │  onRequestFinished → getContent()
+│  │ （キャプチャ層）                │  │
+│  └───────────┬──────────────────┘  │
+│              │ sanitizeEntry()       │  ヘッダー許可リスト / トークン除去
+│              ▼                       │
+│  ┌──────────────────────────────┐  │
+│  │ lib/db.ts（保存層）            │  │  IndexedDB 書き込み
+│  └───────────┬──────────────────┘  │
+│  ┌───────────┴──────────────────┐  │
+│  │ panel（閲覧 UI）               │  │  一覧・フィルタ・詳細表示
+│  └──────────────────────────────┘  │
+└──────────────┬─────────────────────┘
+               ▼
+         ┌───────────┐        ┌──────────────┐
+         │ IndexedDB │◄───────┤ popup         │  トグル・出力
+         └───────────┘        └──────────────┘
 ```
 
-DevTools ページは大半の拡張機能 API を直接利用できず、コンテンツスクリプトと同等の限られたサブセットしか持たない。IndexedDB や `chrome.storage` への書き込みは Service Worker 側で行い、両者はメッセージパッシングで通信する。この 3 層構成は本方式における必須の制約である。
+**Service Worker は使わない。** DevTools ページは拡張機能のオリジンで動くため、そこから開く IndexedDB は他のコンテキストが開くものと同一である。現行の Chrome では DevTools ページから拡張機能 API も利用できる（[公式ドキュメント](https://developer.chrome.com/docs/extensions/how-to/devtools/extend-devtools)：「The DevTools page can directly access extensions APIs.」）。したがって保存を Service Worker に委ねる必然性はない。
+
+Service Worker を経由しない判断は、以下の検討による。
+
+1. **同時書き込みは問題にならない。** DevTools はタブごとに独立して開くため書き込み主体は複数になるが、IndexedDB は同一オリジンの複数コンテキストからのアクセスをトランザクションで直列化する。
+2. **サニタイズの集約は型で担保する。** 保存関数が `SanitizedLogEntry` しか受け取らないため、未サニタイズのエントリを保存する経路はコンパイル時に塞がれる。書き込み口が 1 本であることに依存しない。
+3. **Service Worker が唯一必須だったのは定期パージ（`chrome.alarms`）だが、これは要件から外した。** 5.3 を参照。
+
+Service Worker を挟まないことで、Port の配線・メッセージの型定義・Service Worker の終了への耐性という 3 つの複雑さが不要になり、転送中のエントリを取りこぼす経路も消える。`background.ts` は現状なにもしない。
 
 ---
 
@@ -128,28 +131,41 @@ DevTools ページは大半の拡張機能 API を直接利用できず、コン
 | CAP-06 | サイズ上限 | 設定値を超えるボディは保存せず、メタデータに超過フラグを立てる |
 | CAP-07 | タブ情報の付与 | `chrome.devtools.inspectedWindow.tabId` を各エントリに付与する |
 
-### 5.2 サニタイズ（Service Worker）
+### 5.2 サニタイズ
 
-保存直前に必ず 1 箇所を通過させる。採取層ではなく保存層に置くことで、将来キャプチャ方式を変更しても漏れが生じない。
+保存直前に必ず 1 箇所を通過させる。採取層ではなく保存の手前に置くことで、将来キャプチャ方式を変更しても漏れが生じない。保存関数がサニタイズ済みの型しか受け取らないため、この通過はコンパイル時に強制される。
 
 | ID | 機能 | 内容 |
 | --- | --- | --- |
 | SAN-01 | ヘッダー許可リスト | 保存してよいヘッダーのみを通す許可リスト方式とする。拒否リスト方式は独自認証ヘッダーを取りこぼすため採用しない |
 | SAN-02 | ヘッダー名正規化 | 比較前に小文字化する（`Authorization` / `authorization` の双方が実際に出現するため） |
 | SAN-03 | 除外対象ヘッダー | `authorization`、`cookie`、`set-cookie` を最低ラインとして許可リストに含めない |
-| SAN-04 | ボディ内トークン除去 | `Bearer …`、JWT、`access_token` / `id_token` / `refresh_token` を `[REDACTED]` に置換する |
+| SAN-04 | ボディ内トークン除去 | `Bearer …` / `Basic …`、JWT、`access_token` / `id_token` / `refresh_token` 等を `[REDACTED]` に置換する |
 | SAN-05 | URL 内トークン除去 | クエリパラメータ内の `access_token`、`id_token`、`api_key`、`token` 等を置換する |
 
 正規表現による除去は完全ではない。独自形式のトークンは検出できないため、機微な API は CAP-04 の段階で採取対象から除外する二段構えとする。
 
-### 5.3 保存（Service Worker）
+補足（実装時の決定）：
 
-| ID | 機能 | 内容 |
-| --- | --- | --- |
-| STO-01 | 保存先 | IndexedDB。`unlimitedStorage` 権限を宣言する。`chrome.storage.local` は既定 10MB であり構造化検索もできないため採用しない |
-| STO-02 | インデックス | `ts`（記録時刻）、`url`、`tabId` にインデックスを張る |
-| STO-03 | 自動パージ | `chrome.alarms` で 1 時間ごとに起動し、`ts` が 7 日より古いエントリを削除する |
-| STO-04 | 手動削除 | 全件削除および表示中のフィルタ結果の削除を提供する |
+- 破棄したヘッダーは**名前だけ**を `droppedRequestHeaders` / `droppedResponseHeaders` に残す。「独自認証ヘッダーが付いていた」という事実自体が調査に有用なため。値は一切保持しない。
+- 値を伏せるキーは上記に加えて `client_secret`、`secret`、`password`、`session_id`、`credentials`、`auth`、`code` も対象とする。キー名は小文字化と区切り文字の除去で正規化するため、`accessToken` / `access-token` のような表記ゆれも同一視する。
+- URL はクエリだけでなく**フラグメント**（OAuth implicit flow）と URL 内の認証情報も対象にする。キーが未知でも値が JWT の形をしていれば置換する。
+- URL は保存層の検索対象でもあるため、置換が発生しなかった URL は 1 文字も変形させない。
+- ボディの置換は JSON を壊さないこと（置換後も `JSON.parse` できること）を条件とする。
+
+### 5.3 保存（DevTools ページ）
+
+| ID | 機能 | 内容 | 状態 |
+| --- | --- | --- | --- |
+| STO-01 | 保存先 | IndexedDB（DB 名 `everlog`）。`chrome.storage.local` は既定 10MB であり構造化検索もできないため採用しない | 実装済み |
+| STO-02 | ストア構成 | メタデータの `logs` とボディの `bodies` に分ける。一覧取得でボディをロードしない（8.3）ための必須の分割 | 実装済み |
+| STO-03 | インデックス | `logs` の `ts`（記録時刻）、`tabId`、`host` にインデックスを張る。取得は常に `ts` を降順に辿り、期間はインデックス範囲で絞る。URL 部分一致はインデックスで表現できないためカーソル内で判定する | 実装済み |
+| STO-04 | 基本操作 | 保存 / 条件付き取得 / ボディ取得 / 全削除 | 実装済み |
+| STO-05 | 自動パージ | 保持期間や容量上限による自動削除 | **未実装**。将来検討 |
+
+`unlimitedStorage` は宣言しない。自動削除を持たない現状では上限を自ら管理していないため、既定クォータの範囲で運用する。`alarms` も不要（5.3 に定期処理が無いため）。
+
+保存量が増えるのは DevTools を開いている間だけであり、自動削除を導入する場合も `chrome.alarms` ではなく書き込み経路や DevTools 起動時のチェックで実現できる（Service Worker を必要としない）。
 
 ### 5.4 閲覧 UI（DevTools パネル）
 
@@ -213,17 +229,28 @@ IndexedDB オブジェクトストア `logs`（キー：自動採番）
 | `id` | number | 主キー（自動採番） |
 | `ts` | number | 記録時刻（epoch ミリ秒）。インデックス対象 |
 | `tabId` | number | 記録元タブ。インデックス対象 |
-| `pageUrl` | string | 記録時に開いていたページの URL |
-| `url` | string | リクエスト URL（サニタイズ済み）。インデックス対象 |
+| `pageUrl` | string | 記録時に開いていたページの URL（サニタイズ済み） |
+| `url` | string | リクエスト URL（サニタイズ済み） |
+| `host` | string | `url` から切り出したホスト。インデックス対象。パースできない場合は空文字 |
 | `method` | string | HTTP メソッド |
 | `status` | number | ステータスコード |
 | `mimeType` | string | レスポンスの MIME タイプ |
 | `timeMs` | number | 所要時間 |
 | `requestHeaders` | object | 許可リスト通過後のリクエストヘッダー |
 | `responseHeaders` | object | 許可リスト通過後のレスポンスヘッダー |
-| `body` | string \| null | サニタイズ済みレスポンスボディ |
+| `droppedRequestHeaders` | string[] | 許可リストに載らず破棄したリクエストヘッダー名（値は保存しない） |
+| `droppedResponseHeaders` | string[] | 許可リストに載らず破棄したレスポンスヘッダー名（値は保存しない） |
 | `bodySize` | number | 元のボディサイズ（バイト） |
 | `bodyStatus` | string | `stored` / `too_large` / `mime_excluded` / `fetch_failed` |
+
+ボディは `logs` に含めず、オブジェクトストア `bodies`（キー：`logId`）に分けて保存する。
+
+| フィールド | 型 | 説明 |
+| --- | --- | --- |
+| `logId` | number | 対応する `logs` の `id` |
+| `body` | string | サニタイズ済みレスポンスボディ |
+
+ボディを取得できなかったエントリ（`bodyStatus` が `stored` 以外）は `bodies` に行を持たない。一覧取得（`queryLogs`）は `bodies` を一切読まない。
 
 ---
 
@@ -231,9 +258,9 @@ IndexedDB オブジェクトストア `logs`（キー：自動採番）
 
 ### 8.1 容量
 
-- 保持期間は既定 7 日。設定で変更可能とする。
 - ボディサイズ上限は既定 1MB。
 - MIME フィルタの既定値は `application/json`、`text/*`、`application/xml` とする。
+- 保持期間および容量上限による自動削除は**未実装**（STO-05）。保存量が増えるのは DevTools を開いている間だけである点を前提に、当面は手動の全削除で運用する。
 - popup に概算使用容量を表示し、肥大化を利用者が把握できるようにする。
 
 ### 8.2 セキュリティ
@@ -245,9 +272,10 @@ IndexedDB オブジェクトストア `logs`（キー：自動採番）
 
 ### 8.3 パフォーマンス
 
-- Port 経由のメッセージ流入により Service Worker のアイドルタイマーがリセットされるため、記録中の Service Worker 終了は考慮不要。
+- **ボディは一覧取得時にはロードせず、詳細表示時に個別取得する。** これを実際に成立させるため、ボディは `logs` とは別のストアに置く（7 章）。この分割が、URL 部分一致のような走査を伴う絞り込みを実用速度に保つ前提にもなっている。
+- 絞り込みは `ts` インデックスの範囲で対象を狭めてから、残りの条件をカーソル内で判定する。
 - 一覧表示は仮想スクロールまたはページングとし、数万件でも操作性を維持する。
-- ボディは一覧取得時にはロードせず、詳細表示時に個別取得する。
+- 保存を Service Worker に置かないため、Service Worker の生存期間（Chrome 114 以降、Port を開いているだけではアイドルタイマーはリセットされない）は保存層の設計に影響しない。将来 Service Worker で処理を行う場合はこの点を考慮する。
 
 ---
 
@@ -265,33 +293,35 @@ IndexedDB オブジェクトストア `logs`（キー：自動採番）
 
 ## 10. ファイル構成
 
+ビルドには WXT を用いる。`entrypoints/` 配下の配置から manifest が自動生成されるため、`manifest.json` は成果物であり、リポジトリには置かない。
+
 ```
 /
-├── manifest.json
-├── devtools.html          # devtools.js を読み込むだけ
-├── devtools.js            # キャプチャ層 + パネル登録
-├── panel.html             # 閲覧 UI
-├── panel.js
-├── popup.html             # トグル・出力・設定
-├── popup.js
-├── background.js          # Service Worker（サニタイズ・保存・パージ）
+├── wxt.config.ts          # manifest の宣言（権限等）
+├── vitest.config.ts
+├── entrypoints/
+│   ├── devtools/
+│   │   ├── index.html     # devtools_page として登録される
+│   │   └── main.ts        # キャプチャ → サニタイズ → 保存 の配線
+│   ├── background.ts      # Service Worker（現状なにもしない）
+│   ├── panel/             # 閲覧 UI（未実装）
+│   └── popup/             # トグル・出力・設定（未実装）
 └── lib/
-    ├── db.js              # IndexedDB ラッパー
-    ├── sanitize.js        # ヘッダー許可リスト・トークン除去
-    └── har.js             # HAR 1.2 変換
+    ├── network-log.ts     # データモデル + HAR → エントリ変換（純粋関数）
+    ├── capture.ts         # onRequestFinished 購読・getContent
+    ├── sanitize.ts        # ヘッダー許可リスト・トークン除去
+    ├── db.ts              # IndexedDB（保存・取得・全削除）
+    └── har.ts             # HAR 1.2 変換（未実装）
 ```
 
-### manifest.json（骨子）
+### manifest（骨子）
 
-```json
-{
-  "manifest_version": 3,
-  "name": "Network Log Recorder",
-  "version": "0.1.0",
-  "permissions": ["storage", "unlimitedStorage", "alarms"],
-  "devtools_page": "devtools.html",
-  "background": { "service_worker": "background.js" },
-  "action": { "default_popup": "popup.html" }
+`wxt.config.ts` で以下を宣言する（キャプチャ層のみの現時点では追加権限は不要で、`devtools_page` と `background` は WXT が自動生成する）。
+
+```ts
+manifest: {
+  name: 'EverLog',
+  permissions: ['storage', 'unlimitedStorage', 'alarms'],
 }
 ```
 
