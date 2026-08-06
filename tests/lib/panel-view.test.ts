@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   EMPTY_FILTER_FORM,
   buildFilter,
+  EXPORT_CONFIRM_BYTES,
   classifyStatus,
   describeBodyStatus,
+  describeExportSize,
   formatBody,
   formatBytes,
   formatDuration,
@@ -152,6 +154,22 @@ describe('formatBytes', () => {
 
   it('負値はハイフン', () => {
     expect(formatBytes(-1)).toBe('-');
+  });
+});
+
+describe('describeExportSize', () => {
+  it('件数を区切り、サイズを単位付きで並べる', () => {
+    expect(describeExportSize(1234, 1024 * 1024 * 52)).toBe('1,234 件 / 約 52.0 MB');
+  });
+
+  it('0 件でも文言を作れる', () => {
+    expect(describeExportSize(0, 0)).toBe('0 件 / 約 0 B');
+  });
+});
+
+describe('EXPORT_CONFIRM_BYTES', () => {
+  it('確認を挟む閾値は 50 MB', () => {
+    expect(EXPORT_CONFIRM_BYTES).toBe(50 * 1024 * 1024);
   });
 });
 

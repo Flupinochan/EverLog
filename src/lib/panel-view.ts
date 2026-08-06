@@ -151,6 +151,19 @@ export function formatBytes(bytes: number): string {
   return `${rounded} ${BYTE_UNITS[unit]}`;
 }
 
+/**
+ * HAR 出力の前に確認を挟む概算サイズの閾値。
+ *
+ * 出力はフィルタ該当の全件が対象なので、条件を絞らずに押すと数百 MB になりうる。
+ * 毎回確認を出すと邪魔なので、意図しない規模のときだけ止める。
+ */
+export const EXPORT_CONFIRM_BYTES = 50 * 1024 * 1024;
+
+/** 出力対象の規模を表す文言。`1,234 件 / 約 52.3 MB`。 */
+export function describeExportSize(count: number, bytes: number): string {
+  return `${count.toLocaleString('en-US')} 件 / 約 ${formatBytes(bytes)}`;
+}
+
 /** JSON として整形表示してよい MIME タイプか（`application/problem+json` 等も含む）。 */
 export function isJsonLike(mimeType: string): boolean {
   const type = mimeType.trim().toLowerCase();
