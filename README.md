@@ -137,10 +137,18 @@ DevTools ページは大半の拡張機能 API を直接利用できず、コン
 | SAN-01 | ヘッダー許可リスト | 保存してよいヘッダーのみを通す許可リスト方式とする。拒否リスト方式は独自認証ヘッダーを取りこぼすため採用しない |
 | SAN-02 | ヘッダー名正規化 | 比較前に小文字化する（`Authorization` / `authorization` の双方が実際に出現するため） |
 | SAN-03 | 除外対象ヘッダー | `authorization`、`cookie`、`set-cookie` を最低ラインとして許可リストに含めない |
-| SAN-04 | ボディ内トークン除去 | `Bearer …`、JWT、`access_token` / `id_token` / `refresh_token` を `[REDACTED]` に置換する |
+| SAN-04 | ボディ内トークン除去 | `Bearer …` / `Basic …`、JWT、`access_token` / `id_token` / `refresh_token` 等を `[REDACTED]` に置換する |
 | SAN-05 | URL 内トークン除去 | クエリパラメータ内の `access_token`、`id_token`、`api_key`、`token` 等を置換する |
 
 正規表現による除去は完全ではない。独自形式のトークンは検出できないため、機微な API は CAP-04 の段階で採取対象から除外する二段構えとする。
+
+補足（実装時の決定）：
+
+- 破棄したヘッダーは**名前だけ**を `droppedRequestHeaders` / `droppedResponseHeaders` に残す。「独自認証ヘッダーが付いていた」という事実自体が調査に有用なため。値は一切保持しない。
+- 値を伏せるキーは上記に加えて `client_secret`、`secret`、`password`、`session_id`、`credentials`、`auth`、`code` も対象とする。キー名は小文字化と区切り文字の除去で正規化するため、`accessToken` / `access-token` のような表記ゆれも同一視する。
+- URL はクエリだけでなく**フラグメント**（OAuth implicit flow）と URL 内の認証情報も対象にする。キーが未知でも値が JWT の形をしていれば置換する。
+- URL は保存層のインデックスキー（STO-02）でもあるため、置換が発生しなかった URL は 1 文字も変形させない。
+- ボディの置換は JSON を壊さないこと（置換後も `JSON.parse` できること）を条件とする。
 
 ### 5.3 保存（Service Worker）
 
@@ -213,7 +221,7 @@ IndexedDB オブジェクトストア `logs`（キー：自動採番）
 | `id` | number | 主キー（自動採番） |
 | `ts` | number | 記録時刻（epoch ミリ秒）。インデックス対象 |
 | `tabId` | number | 記録元タブ。インデックス対象 |
-| `pageUrl` | string | 記録時に開いていたページの URL |
+| `pageUrl` | string | 記録時に開いていたページの URL（サニタイズ済み） |
 | `url` | string | リクエスト URL（サニタイズ済み）。インデックス対象 |
 | `method` | string | HTTP メソッド |
 | `status` | number | ステータスコード |
@@ -221,6 +229,8 @@ IndexedDB オブジェクトストア `logs`（キー：自動採番）
 | `timeMs` | number | 所要時間 |
 | `requestHeaders` | object | 許可リスト通過後のリクエストヘッダー |
 | `responseHeaders` | object | 許可リスト通過後のレスポンスヘッダー |
+| `droppedRequestHeaders` | string[] | 許可リストに載らず破棄したリクエストヘッダー名（値は保存しない） |
+| `droppedResponseHeaders` | string[] | 許可リストに載らず破棄したレスポンスヘッダー名（値は保存しない） |
 | `body` | string \| null | サニタイズ済みレスポンスボディ |
 | `bodySize` | number | 元のボディサイズ（バイト） |
 | `bodyStatus` | string | `stored` / `too_large` / `mime_excluded` / `fetch_failed` |
