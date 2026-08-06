@@ -59,7 +59,7 @@ Chrome 拡張機能でレスポンスボディを取得できる API は 2 つ�
 | 取りこぼし | DevTools を開く前のリクエスト | attach 前のリクエスト |
 | コード形式 | コールバックのみ | Promise 対応 |
 | データ形式 | HAR エントリ形式 | CDP 生イベント |
-| Service Worker 維持 | Port 経由のメッセージ流入で維持 | デバッガーセッションが維持（Chrome 116〜） |
+| Service Worker 維持 | メッセージ流入中のみ維持（Port を開くだけでは維持されない） | デバッガーセッションが維持（Chrome 116〜） |
 | タブ管理コード | 不要 | 必要（attach / detach の管理） |
 | 実装難度 | 低 | 高 |
 
@@ -110,7 +110,15 @@ Chrome 拡張機能でレスポンスボディを取得できる API は 2 つ�
       └───────────┘        └──────────────┘
 ```
 
-DevTools ページは大半の拡張機能 API を直接利用できず、コンテンツスクリプトと同等の限られたサブセットしか持たない。IndexedDB や `chrome.storage` への書き込みは Service Worker 側で行い、両者はメッセージパッシングで通信する。この 3 層構成は本方式における必須の制約である。
+保存層を Service Worker に置くのは、API の制約ではなく**ライフタイムと書き込み口の単一化**のためである。
+
+DevTools ページは拡張機能のオリジンで動くため、そこから開く IndexedDB は Service Worker が開くものと同一である。現行の Chrome では DevTools ページから拡張機能 API も利用できる（[公式ドキュメント](https://developer.chrome.com/docs/extensions/how-to/devtools/extend-devtools)：「The DevTools page can directly access extensions APIs.」）。つまり技術的には DevTools ページから直接書き込める。それでも Service Worker を挟む理由は以下の 3 点である。
+
+1. **DevTools ページは DevTools ウィンドウが閉じると消える。** 保持期間を過ぎたログの自動パージ（STO-03）は DevTools を開いていない時間帯にも走る必要があり、`chrome.alarms` を受け取れるのは Service Worker だけである。
+2. **書き込み主体が複数になる。** DevTools はタブごとに独立して開くため、DevTools ページのインスタンスも同時に複数存在する。Service Worker は拡張機能に 1 つだけの共有コンテキストであり、書き込み口をここに収束させられる。
+3. **サニタイズを 1 箇所に集約する設計（5.2）が、書き込み口が 1 本であることに依存している。** 各 DevTools ページが直接書くなら、サニタイズも各インスタンスで呼ぶことになり、集約の保証が失われる。
+
+将来 popup や DevTools パネルが同じデータを読む際も、Service Worker が単一の窓口となる。
 
 ---
 
@@ -255,7 +263,7 @@ IndexedDB オブジェクトストア `logs`（キー：自動採番）
 
 ### 8.3 パフォーマンス
 
-- Port 経由のメッセージ流入により Service Worker のアイドルタイマーがリセットされるため、記録中の Service Worker 終了は考慮不要。
+- **Service Worker は記録中でも終了しうる前提で作る。** Chrome 114 以降、Port を開いているだけではアイドルタイマーはリセットされない（[公式ドキュメント](https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle)：「Sending a message with long-lived messaging keeps the service worker alive. Opening a port no longer resets the timers.」）。メッセージが流れている間は生存するが、リクエストが発生しない時間帯には 30 秒で終了する。したがって IndexedDB のハンドルをモジュールスコープで使い回さず操作ごとに開き、未書き込みのエントリをメモリ上のキューに滞留させない。
 - 一覧表示は仮想スクロールまたはページングとし、数万件でも操作性を維持する。
 - ボディは一覧取得時にはロードせず、詳細表示時に個別取得する。
 

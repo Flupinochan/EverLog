@@ -23,7 +23,13 @@ entrypoints/panel/（一覧・フィルタ・詳細表示）
 entrypoints/popup/（記録トグル・HAR 出力・設定）
 ```
 
-DevTools ページは拡張機能 API の限られたサブセットしか使えないため、IndexedDB への書き込みは必ず Service Worker 側で行う。
+IndexedDB への書き込みは必ず Service Worker 側で行う。理由は API の制約ではない（DevTools ページは拡張機能のオリジンで動くため、技術的には同じ IndexedDB を直接開ける）。次の 3 点のためである。
+
+- DevTools ページは DevTools ウィンドウが閉じると消えるため、定期パージ（`chrome.alarms`）を担えない。
+- DevTools はタブごとに開くため書き込み主体が複数になる。Service Worker は拡張機能に 1 つだけの共有コンテキストであり、書き込み口をここに収束させられる。
+- サニタイズを 1 箇所に集約する設計が、書き込み口が 1 本であることに依存している。
+
+**Service Worker は記録中でも終了しうる前提で書く。** Port を開いているだけではアイドルタイマーはリセットされない（Chrome 114 以降）。IndexedDB のハンドルをモジュールスコープで使い回さず、未書き込みのエントリをメモリ上に滞留させない。
 
 ### 実装状況
 
