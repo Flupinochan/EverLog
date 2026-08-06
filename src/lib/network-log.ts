@@ -5,11 +5,11 @@
  * DevTools 側の購読処理は `src/lib/capture.ts` に置く。
  */
 
-/** ボディが保存されたか、されなかった場合はその理由（仕様書 6.4）。 */
+/** ボディが保存されたか、されなかった場合はその理由。 */
 export type BodyStatus = 'stored' | 'too_large' | 'mime_excluded' | 'fetch_failed';
 
 /**
- * 保存対象のログエントリ（仕様書 7 章のデータモデル）。
+ * 保存対象のログエントリ。
  * 主キー `id` は保存層が採番するため、キャプチャ層では持たない。
  */
 export interface NetworkLogEntry {
@@ -77,7 +77,7 @@ export interface CaptureOptions {
   maxBodyBytes: number;
 }
 
-/** 仕様書 8.1 の既定値。 */
+/** MIME フィルタとボディサイズ上限の既定値。 */
 export const DEFAULT_CAPTURE_OPTIONS: CaptureOptions = {
   mimePatterns: ['application/json', 'application/xml', 'text/*'],
   maxBodyBytes: 1024 * 1024,
@@ -208,7 +208,8 @@ function decodeBase64(encoded: string): string | null {
 /**
  * `getContent()` の結果をエントリに反映して `bodyStatus` を確定させる。
  *
- * ボディが得られなくてもエントリ自体は捨てない（仕様書 6.4）。
+ * ボディが得られなくてもエントリ自体は捨てない。「リクエストは発生したがボディが
+ * 残っていない」という事実自体が調査上の情報になるため。
  */
 export function attachBody(
   entry: NetworkLogEntry,

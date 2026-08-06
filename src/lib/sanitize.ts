@@ -1,11 +1,11 @@
 /**
- * サニタイズ層。保存直前にエントリをここへ通し、機微情報を落とす（仕様書 5.2）。
+ * サニタイズ層。保存直前にエントリをここへ通し、機微情報を落とす。
  *
  * キャプチャ層ではなく保存層の手前に置くことで、将来キャプチャ方式を変更しても
  * 漏れが生じないようにする（CLAUDE.md の設計上の制約）。
  *
  * 正規表現ベースの除去は完全ではない。独自形式のトークンは検出できないため、
- * 機微な API はキャプチャ時の URL フィルタ（CAP-04）で採取対象から外す二段構えとする。
+ * 機微な API はキャプチャ時の URL フィルタ（未実装）で採取対象から外す二段構えとする。
  */
 
 import type { NetworkLogEntry } from './network-log';
@@ -30,7 +30,7 @@ export interface SanitizeOptions {
 }
 
 /**
- * 許可リスト（SAN-01）。`authorization` / `cookie` / `set-cookie` は含めない（SAN-03）。
+ * 許可リスト。`authorization` / `cookie` / `set-cookie` は含めない。
  * 拒否リストではなく許可リストにすることで、`x-custom-auth` のような独自認証ヘッダーも
  * 自動的に落ちる。
  */
@@ -75,7 +75,7 @@ const DEFAULT_ALLOWED_RESPONSE_HEADERS = [
 ];
 
 /**
- * 値を伏せるキー（SAN-04 / SAN-05）。
+ * 値を伏せるキー（ボディ内トークンと URL 内トークンの両方に適用）。
  *
  * `code` は OAuth 認可コードを想定して入れているが、商品コードやエラーコードでも
  * 使われるため誤検知が最も起きやすい。邪魔なら 1 行削れば外せる。
@@ -166,14 +166,14 @@ function redactSearchParams(params: URLSearchParams, redactKeys: Set<string>): b
 }
 
 /**
- * URL からトークンを除去する（SAN-05）。
+ * URL からトークンを除去する。
  *
  * クエリに加え、OAuth implicit flow でトークンが載るフラグメントと、
  * URL 内の認証情報（`https://user:pass@host/`）も対象にする。
  * パスセグメントに埋め込まれた JWT（`/verify/eyJ...`）も対象にする。
  *
  * 何も置換しなかった場合は入力文字列をそのまま返す。URL は保存層のインデックス
- * キー（STO-02）でもあるため、エスケープ表現を不用意に変えない。
+ * キーでもあるため、エスケープ表現を不用意に変えない。
  */
 export function sanitizeUrl(url: string, options: SanitizeOptions = DEFAULT_SANITIZE_OPTIONS): string {
   if (!url) return url;
@@ -237,7 +237,7 @@ function redactQueryLikeString(text: string, redactKeys: Set<string>): string {
 }
 
 /**
- * ボディからトークンを除去する（SAN-04）。
+ * ボディからトークンを除去する。
  *
  * JSON として壊さないよう、キーと引用符を残して値だけを置換する。
  */
@@ -274,7 +274,7 @@ export function sanitizeBody(
 const URL_VALUED_HEADERS = new Set(['referer', 'location']);
 
 /**
- * ヘッダーを許可リストで濾す（SAN-01 / SAN-02 / SAN-03）。
+ * ヘッダーを許可リストで濾す。
  *
  * 落としたヘッダーは名前だけ返す。値は一切持ち回らない。
  */

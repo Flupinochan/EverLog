@@ -175,7 +175,7 @@ export function formatBody(body: string, mimeType: string): { text: string; pret
 }
 
 /**
- * ボディが保存されていない理由の説明（仕様書 VIEW-04）。
+ * ボディが保存されていない理由の説明。
  * `stored` は理由がないため空文字を返す。
  */
 export function describeBodyStatus(status: BodyStatus): string {

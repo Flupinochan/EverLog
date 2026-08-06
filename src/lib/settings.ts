@@ -1,5 +1,5 @@
 /**
- * 拡張機能の設定。`chrome.storage.local` に永続化する（仕様書 CAP-03）。
+ * 拡張機能の設定。`chrome.storage.local` に永続化する。
  *
  * このモジュールは `chrome.storage` を引数で受け取り、自分では `browser` を import
  * しない。キャプチャ層が Chrome API を `startNetworkCapture()` の引数で受け取るのと
@@ -13,7 +13,7 @@
 
 /** 保存する設定の全体。 */
 export interface Settings {
-  /** 記録の ON/OFF（CAP-03） */
+  /** 記録の ON/OFF */
   recording: boolean;
 }
 

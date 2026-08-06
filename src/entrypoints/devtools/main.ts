@@ -11,7 +11,7 @@ import { sanitizeEntry } from '@/lib/sanitize';
 import { loadSettings, watchSettings } from '@/lib/settings';
 import type { NetworkLogEntry } from '@/lib/network-log';
 
-/** 記録が有効か（CAP-03）。切り替えは `applyRecording()`。 */
+/** 記録が有効か。切り替えは `applyRecording()`。 */
 let recording = false;
 
 /**
@@ -123,7 +123,7 @@ watchSettings(browser.storage, (settings) => {
   applyRecording(settings.recording);
 });
 
-// 閲覧 UI を DevTools のパネルとして登録する（README 6.1）。パネルのページは
+// 閲覧 UI を DevTools のパネルとして登録する。パネルのページは
 // ビルド結果のルートに `panel.html` として出力される。
 browser.devtools.panels.create('EverLog', '', 'panel.html');
 

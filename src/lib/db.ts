@@ -5,8 +5,8 @@
  * 拡張機能のオリジンで動くため同じ DB を開けること、IndexedDB が複数コンテキストからの
  * 同時アクセスをトランザクションで直列化することによる。
  *
- * メタデータとボディを別ストアに分けているのは、一覧取得でボディをロードしないため
- * （仕様書 8.3）。`queryLogs()` は `bodies` ストアを一切触らない。
+ * メタデータとボディを別ストアに分けているのは、一覧取得でボディをロードしないため。
+ * `queryLogs()` は `bodies` ストアを一切触らない。
  */
 
 import type { SanitizedLogEntry } from './sanitize';
@@ -231,7 +231,7 @@ export async function queryLogs(filter: LogFilter = {}): Promise<StoredLog[]> {
   });
 }
 
-/** 保存状況の概算（仕様書 POP-05）。 */
+/** 保存状況の概算。 */
 export interface StorageStats {
   /** 保存済みログの件数 */
   count: number;
@@ -249,7 +249,7 @@ export interface StorageStats {
  * 保存件数とボディサイズの合計を返す。
  *
  * `bodies` ストアは開かない。サイズは `logs` の `bodySize` から積めるため、
- * 集計のためにボディ本体をロードしない（仕様書 8.3）。
+ * 集計のためにボディ本体をロードしない。
  *
  * `navigator.storage.estimate()` は使わない。あれは拡張機能オリジン全体の値であり、
  * EverLog が保存したログの量とは一致しないため。

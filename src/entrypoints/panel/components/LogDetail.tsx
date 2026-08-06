@@ -1,5 +1,5 @@
 /**
- * 詳細表示（VIEW-03 / VIEW-04）。選択したエントリのヘッダーとボディを見せる。
+ * 詳細表示。選択したエントリのヘッダーとボディを見せる。
  *
  * ボディの取得は行わず、props で受け取る。取得は `useLogBody` の責務。
  */
@@ -105,7 +105,7 @@ export function LogDetail({ log, body, bodyLoading, bodyError, onClose }: Props)
 
       {hasDropped && (
         <Section title="保存しなかったヘッダー">
-          {/* 値は保存していない。「独自認証ヘッダーが付いていた」事実だけを残す（README 5.2）。
+          {/* 値は保存していない。「独自認証ヘッダーが付いていた」事実だけを残す。
               同名でも request と response では意味が違うため、行を分けて出す */}
           <Rows
             rows={[
@@ -160,7 +160,7 @@ function BodyView({
   if (error !== null) {
     return <p className="text-xs text-red-600 dark:text-red-400">読み込みに失敗しました: {error}</p>;
   }
-  // 保存されなかった理由は破棄せず表示する（README 6.4）
+  // 保存されなかった理由は破棄せず表示する
   if (reason !== '') return <p className="text-xs text-zinc-500">{reason}</p>;
   if (body === null) {
     return <p className="text-xs text-zinc-500">ボディは保存されていません</p>;

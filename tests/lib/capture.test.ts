@@ -179,7 +179,7 @@ describe('startNetworkCapture', () => {
       await vi.advanceTimersByTimeAsync(GET_CONTENT_TIMEOUT_MS);
       const entry = await pending;
 
-      // メタデータは残す（仕様書 6.4）。エントリごと取りこぼさない
+      // メタデータは残す。エントリごと取りこぼさない
       expect(entry.bodyStatus).toBe('fetch_failed');
       expect(entry.body).toBeNull();
       expect(entry.url).toBe('https://api.example.com/items');

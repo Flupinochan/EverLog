@@ -13,9 +13,9 @@ export default defineConfig({
   manifest: {
     name: 'EverLog',
     description: 'DevTools で観測したネットワークリクエストを記録し、後から参照できるようにする',
-    // 記録トグル等の設定を chrome.storage.local に永続化する（CAP-03）。
+    // 記録トグル等の設定を chrome.storage.local に永続化する。
     // unlimitedStorage は宣言しない（自動削除が無い現状で上限を自ら管理していないため）。
-    // alarms も不要（定期処理を持たない）。debugger 権限は使わない（README 3.2）。
+    // alarms も不要（定期処理を持たない）。debugger は全タブに警告バーが出るため使わない。
     permissions: ['storage'],
     // action キーは popup エントリポイントから WXT が自動生成するため書かない。
   },
