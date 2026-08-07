@@ -14,7 +14,13 @@ import {
   type LogSource,
 } from '@/lib/log-source';
 import type { SettingsChangeSource, SettingsStorageArea } from '@/lib/settings';
-import { formatPatternLines, hasUnsavedPatterns, parsePatternLines } from '@/lib/popup-view';
+import {
+  describeConsoleRecording,
+  describeNetworkRecording,
+  formatPatternLines,
+  hasUnsavedPatterns,
+  parsePatternLines,
+} from '@/lib/popup-view';
 import type { UrlFilterMode } from '@/lib/network-log';
 import { RecordingToggle } from './components/RecordingToggle';
 import { StorageStats } from './components/StorageStats';
@@ -117,9 +123,18 @@ export function App({
 
       <RecordingToggle
         recording={settings.recording}
+        label={describeNetworkRecording(settings.recording)}
         disabled={settingsLoading}
         onChange={(recording) => void update({ recording })}
       />
+      <RecordingToggle
+        recording={settings.consoleRecording}
+        label={describeConsoleRecording(settings.consoleRecording)}
+        disabled={settingsLoading}
+        onChange={(consoleRecording) => void update({ consoleRecording })}
+      />
+      {/* URL フィルタは両方に効く。コンソール側はリクエスト URL を持たないため、
+          判定の対象がページの URL になる（`console-bridge.content.ts` を参照） */}
       <UrlFilterEditor
         mode={settings.urlFilter.mode}
         onModeChange={changeMode}

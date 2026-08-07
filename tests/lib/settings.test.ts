@@ -75,6 +75,25 @@ describe('normalizeSettings', () => {
     });
   });
 
+  it('consoleRecording を独立して読み書きできる', () => {
+    expect(normalizeSettings({ recording: true, consoleRecording: false })).toEqual({
+      ...DEFAULT_SETTINGS,
+      consoleRecording: false,
+    });
+    expect(normalizeSettings({ recording: false, consoleRecording: true })).toEqual({
+      ...DEFAULT_SETTINGS,
+      recording: false,
+    });
+  });
+
+  it('consoleRecording が無い保存値は既定値で埋める（更新前からの利用者）', () => {
+    // 拡張機能の更新直後は保存済みの設定にこのキーが無い
+    expect(normalizeSettings({ recording: false }).consoleRecording).toBe(true);
+    expect(normalizeSettings({ recording: false, consoleRecording: 'yes' }).consoleRecording).toBe(
+      true,
+    );
+  });
+
   it('既定値のオブジェクトを共有しない（呼び出し側の変更が漏れない）', () => {
     const first = normalizeSettings(undefined);
     first.recording = false;

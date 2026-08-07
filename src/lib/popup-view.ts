@@ -60,6 +60,39 @@ export function exceedsPatternLimit(patterns: string[]): boolean {
   return patterns.length > MAX_URL_PATTERNS;
 }
 
+/** 記録トグルに出す見出しと補足。 */
+export interface RecordingLabel {
+  title: string;
+  detail: string;
+}
+
+/**
+ * ネットワークログの記録状態の説明。
+ *
+ * 「DevTools を開いているタブだけ」と明示する。この制約は API 側の事情であって
+ * 利用者には見えないため、書いておかないと「記録中なのに残らない」と映る。
+ */
+export function describeNetworkRecording(recording: boolean): RecordingLabel {
+  return recording
+    ? { title: 'ネットワークを記録中', detail: 'DevTools を開いているタブのリクエストを保存します' }
+    : { title: 'ネットワークの記録を停止中', detail: '新しいリクエストは保存されません' };
+}
+
+/**
+ * コンソールログの記録状態の説明。
+ *
+ * ネットワークと違い DevTools を開いていなくても記録される。同じ「記録中」でも
+ * 範囲が違うので、それぞれの文言で書き分ける。
+ */
+export function describeConsoleRecording(recording: boolean): RecordingLabel {
+  return recording
+    ? {
+        title: 'コンソールを記録中',
+        detail: 'DevTools を開いていなくても、ページの console 出力を保存します',
+      }
+    : { title: 'コンソールの記録を停止中', detail: '新しい console 出力は保存されません' };
+}
+
 /** モードの意味を 1 行で説明する。 */
 export function describeUrlFilterMode(mode: UrlFilterMode): string {
   return mode === 'allow'

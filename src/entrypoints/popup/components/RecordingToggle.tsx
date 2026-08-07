@@ -2,16 +2,23 @@
  * 記録の ON/OFF。props を描くだけの表示コンポーネント。
  *
  * バッジ表示は background が設定の変更を購読して行うため、ここでは触らない。
+ *
+ * ネットワークとコンソールで同じものを使い回す。文言は `popup-view.ts` の
+ * `describeNetworkRecording()` / `describeConsoleRecording()` が作るため、
+ * このコンポーネントは自分がどちらの記録を表しているかを知らない。
  */
+
+import type { RecordingLabel } from '@/lib/popup-view';
 
 interface Props {
   recording: boolean;
+  label: RecordingLabel;
   /** 設定を読み終えるまでは操作させない */
   disabled: boolean;
   onChange: (recording: boolean) => void;
 }
 
-export function RecordingToggle({ recording, disabled, onChange }: Props) {
+export function RecordingToggle({ recording, label, disabled, onChange }: Props) {
   return (
     <label className="flex cursor-pointer items-center gap-2.5 rounded border border-zinc-200 bg-zinc-50 px-3 py-2.5 dark:border-zinc-700 dark:bg-zinc-800">
       <input
@@ -22,14 +29,8 @@ export function RecordingToggle({ recording, disabled, onChange }: Props) {
         onChange={(event) => onChange(event.target.checked)}
       />
       <span className="flex flex-col">
-        <span className="text-sm font-medium">
-          {recording ? '記録中' : '記録を停止中'}
-        </span>
-        <span className="text-xs text-zinc-500 dark:text-zinc-400">
-          {recording
-            ? 'DevTools を開いているタブのリクエストを保存します'
-            : '新しいリクエストは保存されません'}
-        </span>
+        <span className="text-sm font-medium">{label.title}</span>
+        <span className="text-xs text-zinc-500 dark:text-zinc-400">{label.detail}</span>
       </span>
     </label>
   );

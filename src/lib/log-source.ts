@@ -13,9 +13,12 @@ import {
   getBodies,
   getBody,
   getStats,
+  queryConsoleLogs,
   queryLogs,
+  type ConsoleLogFilter,
   type LogFilter,
   type StorageStats,
+  type StoredConsoleLog,
   type StoredLog,
 } from './db';
 
@@ -26,7 +29,14 @@ export interface LogSource {
   getBody(id: number): Promise<string | null>;
   /** 複数のボディをまとめて返す。保存されていない ID は載らない（HAR 出力用） */
   getBodies(ids: readonly number[]): Promise<Map<number, string>>;
-  /** 保存件数とボディサイズの合計を返す（popup の保存状況表示用） */
+  /**
+   * 条件に合うコンソールログを新しい順に返す。本文も含む。
+   *
+   * ネットワーク側のように取得を 2 つに分けないのは、コンソールは 1 件が小さく
+   * 本文を別ストアへ逃がしていないため（`db.ts` の `StoredConsoleLog` を参照）。
+   */
+  queryConsoleLogs(filter: ConsoleLogFilter): Promise<StoredConsoleLog[]>;
+  /** 保存件数とサイズの合計を返す（popup の保存状況表示用） */
   getStats(): Promise<StorageStats>;
 }
 
@@ -35,6 +45,7 @@ export const indexedDbLogSource: LogSource = {
   queryLogs,
   getBody,
   getBodies,
+  queryConsoleLogs,
   getStats,
 };
 
