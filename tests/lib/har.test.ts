@@ -96,17 +96,30 @@ describe('toHarEntry', () => {
   });
 
   it('ボディがあれば content.text に載せる', () => {
-    const entry = toHarEntry(storedLog({ bodySize: 13 }), '{"ok":true}');
+    const entry = toHarEntry(storedLog(), '{"ok":true}');
 
     expect(entry.response.content.text).toBe('{"ok":true}');
-    expect(entry.response.content.size).toBe(13);
     expect(entry.response.content.mimeType).toBe('application/json');
   });
 
-  it('ボディが無ければ content.text を出さない', () => {
-    const entry = toHarEntry(storedLog({ bodyStatus: 'mime_excluded' }), null);
+  it('content.size を出力する text の実バイト長にする', () => {
+    // `bodySize` はサニタイズ前の長さ。伏せ字が入ると `text` と食い違うため測り直す
+    const entry = toHarEntry(storedLog({ bodySize: 9_999 }), '{"ok":true}');
+
+    expect(entry.response.content.size).toBe(11);
+  });
+
+  it('マルチバイトの text をバイト長で数える', () => {
+    const entry = toHarEntry(storedLog(), 'あい');
+
+    expect(entry.response.content.size).toBe(6);
+  });
+
+  it('ボディが無ければ content.text を出さず、記録時のサイズを残す', () => {
+    const entry = toHarEntry(storedLog({ bodyStatus: 'mime_excluded', bodySize: 4_096 }), null);
 
     expect(entry.response.content).not.toHaveProperty('text');
+    expect(entry.response.content.size).toBe(4_096);
   });
 
   it('base64 と誤解されないよう encoding を付けない', () => {
@@ -247,14 +260,33 @@ describe('buildHar', () => {
     expect(har.log.version).toBe('1.2');
   });
 
-  it('渡された順序を保つ', () => {
-    const logs = [storedLog({ url: 'https://a.example.com/' }, 1), storedLog({ url: 'https://b.example.com/' }, 2)];
+  it('記録時刻の昇順に並べ替える', () => {
+    // 一覧は新しい順に渡ってくる。HAR は時系列で読むものなので出力時に直す
+    const logs = [
+      storedLog({ url: 'https://new.example.com/', ts: 3_000 }, 2),
+      storedLog({ url: 'https://old.example.com/', ts: 1_000 }, 1),
+    ];
     const har = buildHar(logs, new Map(), '0.0.0');
 
     expect(har.log.entries.map((entry) => entry.request.url)).toEqual([
-      'https://a.example.com/',
-      'https://b.example.com/',
+      'https://old.example.com/',
+      'https://new.example.com/',
     ]);
+  });
+
+  it('並べ替えても ID とボディの対応が崩れない', () => {
+    const logs = [storedLog({ ts: 3_000 }, 2), storedLog({ ts: 1_000 }, 1)];
+    const har = buildHar(logs, new Map([[1, 'old body']]), '0.0.0');
+
+    expect(har.log.entries[0]?.response.content.text).toBe('old body');
+    expect(har.log.entries[1]?.response.content).not.toHaveProperty('text');
+  });
+
+  it('引数の配列を書き換えない', () => {
+    const logs = [storedLog({ ts: 3_000 }, 2), storedLog({ ts: 1_000 }, 1)];
+    buildHar(logs, new Map(), '0.0.0');
+
+    expect(logs.map((log) => log.id)).toEqual([2, 1]);
   });
 
   it('JSON にできる（循環参照や undefined を含まない）', () => {

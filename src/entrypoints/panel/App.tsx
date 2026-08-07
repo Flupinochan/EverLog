@@ -70,7 +70,8 @@ export function App({ source = indexedDbLogSource, tabId }: Props = {}) {
   const { body, loading: bodyLoading, error: bodyError } = useLogBody(source, selected);
 
   const version = useMemo(() => extensionVersion(), []);
-  const exportState = useHarExport(source, filter, version);
+  const exportState = useHarExport(source, version);
+  const { start: startExport, cancel: cancelExport } = exportState;
 
   const change = useCallback((patch: Partial<FilterForm>) => {
     setForm((prev) => ({ ...prev, ...patch }));
@@ -79,13 +80,28 @@ export function App({ source = indexedDbLogSource, tabId }: Props = {}) {
   const apply = useCallback(() => {
     setApplied(form);
     setLimit(PAGE_SIZE);
-  }, [form]);
+    // 条件が変われば確認待ちの出力は的外れになる。同意しても古い条件の結果が出てしまう
+    cancelExport();
+  }, [form, cancelExport]);
 
   const reset = useCallback(() => {
     setForm(EMPTY_FILTER_FORM);
     setApplied(EMPTY_FILTER_FORM);
     setLimit(PAGE_SIZE);
-  }, []);
+    cancelExport();
+  }, [cancelExport]);
+
+  /**
+   * 入力欄の内容をそのまま出力条件にする。
+   *
+   * 出力ボタンは `type="button"` でフォームを送信しないため、`適用` を押さずに押される。
+   * `applied` を見ると「絞り込んだつもりの条件」ではなく 1 つ前の条件で出てしまうので、
+   * 押された時点の `form` から条件を作り、同時に一覧の表示条件も揃える。
+   */
+  const exportHar = useCallback(() => {
+    apply();
+    startExport(buildFilter(form, currentTabId));
+  }, [apply, startExport, form, currentTabId]);
 
   return (
     <div className="flex h-screen flex-col bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">
@@ -98,7 +114,7 @@ export function App({ source = indexedDbLogSource, tabId }: Props = {}) {
         autoRefresh={autoRefresh}
         onAutoRefreshChange={setAutoRefresh}
         onReload={reload}
-        onExport={exportState.start}
+        onExport={exportHar}
         exporting={exportState.exporting}
       />
 

@@ -12,6 +12,7 @@
  */
 
 import type { StoredLog } from './db';
+import { byteLength } from './network-log';
 
 /** HAR のヘッダー・クエリ要素。 */
 export interface HarNameValue {
@@ -129,7 +130,11 @@ export function toHarEntry(log: StoredLog, body: string | null): HarEntry {
   const time = resolveTime(log.timeMs);
 
   const content: HarEntry['response']['content'] = {
-    size: log.bodySize,
+    // HAR の `content.size` は `text` の長さを指す。`log.bodySize` はサニタイズ前の長さで
+    // あり（`attachBody()` が測ったあとに `sanitizeEntry()` が伏せ字で書き換える）、
+    // 伏せ字が入ったエントリではそのまま使うと `text` と食い違う。出力する文字列から測り直す。
+    // ボディが無い場合だけは、記録時に分かっていた元のサイズを残す。
+    size: body === null ? log.bodySize : byteLength(body),
     mimeType: log.mimeType,
   };
   // 保存しているのはデコード済みの UTF-8 文字列なので `encoding` フィールドは付けない。
@@ -198,7 +203,12 @@ export function buildHar(
       creator: { name: 'EverLog', version: creatorVersion },
       // ページ単位のグルーピングは行わないため空。エントリ側にも `pageref` を出さない。
       pages: [],
-      entries: logs.map((log) => toHarEntry(log, bodies.get(log.id) ?? null)),
+      // 記録時刻の昇順に並べ替える。一覧は新しい順に見せているが、HAR は時系列で読む
+      // ものであり、そのまま出すと Network パネルへ読み込み直したときに逆順の
+      // ウォーターフォールになる。
+      entries: [...logs]
+        .sort((a, b) => a.ts - b.ts)
+        .map((log) => toHarEntry(log, bodies.get(log.id) ?? null)),
       comment: HAR_COMMENT,
     },
   };

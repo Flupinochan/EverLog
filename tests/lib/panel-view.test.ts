@@ -3,6 +3,7 @@ import {
   EMPTY_FILTER_FORM,
   buildFilter,
   EXPORT_CONFIRM_BYTES,
+  EXPORT_MAX_BYTES,
   classifyStatus,
   describeBodyStatus,
   describeExportSize,
@@ -167,9 +168,18 @@ describe('describeExportSize', () => {
   });
 });
 
-describe('EXPORT_CONFIRM_BYTES', () => {
+describe('出力サイズの閾値', () => {
   it('確認を挟む閾値は 50 MB', () => {
     expect(EXPORT_CONFIRM_BYTES).toBe(50 * 1024 * 1024);
+  });
+
+  it('出力を諦める上限は 500 MB', () => {
+    expect(EXPORT_MAX_BYTES).toBe(500 * 1024 * 1024);
+  });
+
+  it('上限は確認の閾値より大きい', () => {
+    // 逆転すると確認バーが出る余地が無くなり、常に拒否だけになる
+    expect(EXPORT_MAX_BYTES).toBeGreaterThan(EXPORT_CONFIRM_BYTES);
   });
 });
 
