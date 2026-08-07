@@ -5,6 +5,7 @@ import {
   createRateLimiter,
   formatConsoleArgs,
   isConsoleBatchMessage,
+  normalizeCapturedEntry,
   normalizeConsoleLevel,
   parseStackTop,
   previewValue,
@@ -288,5 +289,99 @@ describe('isConsoleBatchMessage', () => {
     expect(isConsoleBatchMessage({ type: 'other', entries: [] })).toBe(false);
     expect(isConsoleBatchMessage(null)).toBe(false);
     expect(isConsoleBatchMessage('everlog:console-batch')).toBe(false);
+  });
+});
+
+describe('formatConsoleArgs（上限まわりの回帰）', () => {
+  it('第 1 引数のテンプレートにも文字列長の上限が効く', () => {
+    // 書式指定子の展開でテンプレートをそのまま使うと、ここだけ上限を通らない
+    const result = formatConsoleArgs(['a'.repeat(20_000)], options({ maxStringLength: 100 }));
+
+    expect(result.text.length).toBeLessThan(200);
+    expect(result.argsStatus).toBe('truncated');
+  });
+
+  it('巨大な第 1 引数があっても内訳を丸ごと失わない', () => {
+    const result = formatConsoleArgs(
+      ['x'.repeat(20_000), 'y'.repeat(20_000)],
+      options({ maxStringLength: 100, maxEntryChars: 1000 }),
+    );
+
+    expect(result.args.length).toBeGreaterThan(0);
+  });
+
+  it('大きい引数が 1 つ挟まっても後ろの小さい引数は残す', () => {
+    const result = formatConsoleArgs(
+      ['短い', 'z'.repeat(500), 'これも短い'],
+      options({ maxStringLength: 1000, maxEntryChars: 520 }),
+    );
+
+    expect(result.args).toContain('これも短い');
+    expect(result.argsStatus).toBe('truncated');
+  });
+});
+
+describe('normalizeCapturedEntry', () => {
+  const valid = {
+    ts: 1_700_000_000_000,
+    pageUrl: 'https://example.com/',
+    level: 'warn',
+    text: 'hi',
+    args: ['hi'],
+    source: 'a.js:1:1',
+    stack: null,
+    argsStatus: 'stored',
+  };
+
+  it('正しい形はそのまま通す', () => {
+    expect(normalizeCapturedEntry(valid)).toEqual(valid);
+  });
+
+  it('オブジェクトでなければ null', () => {
+    expect(normalizeCapturedEntry(null)).toBeNull();
+    expect(normalizeCapturedEntry('everlog')).toBeNull();
+    expect(normalizeCapturedEntry(42)).toBeNull();
+  });
+
+  it('args が配列でなくても例外にせず空配列にする', () => {
+    // ここを素通しするとサニタイズ層で例外になり、同じバッチの正しいエントリまで失う
+    expect(normalizeCapturedEntry({ ...valid, args: null })?.args).toEqual([]);
+    expect(normalizeCapturedEntry({ ...valid, args: 'oops' })?.args).toEqual([]);
+  });
+
+  it('args の要素は文字列だけ残す', () => {
+    expect(normalizeCapturedEntry({ ...valid, args: ['ok', 1, null, {}] })?.args).toEqual(['ok']);
+  });
+
+  it('文字列でないフィールドを既定値に寄せる', () => {
+    const result = normalizeCapturedEntry({ ...valid, text: 42, pageUrl: {}, source: 1, stack: [] });
+
+    expect(result?.text).toBe('');
+    expect(result?.pageUrl).toBe('');
+    expect(result?.source).toBeNull();
+    expect(result?.stack).toBeNull();
+  });
+
+  it('知らないレベルと argsStatus は既定値に寄せる', () => {
+    const result = normalizeCapturedEntry({ ...valid, level: 'table', argsStatus: 'weird' });
+
+    expect(result?.level).toBe('log');
+    expect(result?.argsStatus).toBe('stored');
+  });
+
+  it('ts が数値でなければ現在時刻で埋める', () => {
+    const before = Date.now();
+    const result = normalizeCapturedEntry({ ...valid, ts: 'now' });
+
+    expect(result?.ts).toBeGreaterThanOrEqual(before);
+  });
+
+  it('非有限の ts も現在時刻で埋める', () => {
+    expect(Number.isFinite(normalizeCapturedEntry({ ...valid, ts: Number.NaN })?.ts)).toBe(true);
+  });
+
+  it('余計なキーは持ち越さない', () => {
+    expect(normalizeCapturedEntry({ ...valid, tabId: 999, evil: 1 })).not.toHaveProperty('evil');
+    expect(normalizeCapturedEntry({ ...valid, tabId: 999 })).not.toHaveProperty('tabId');
   });
 });

@@ -475,8 +475,26 @@ describe('sanitizeBody（引用符の無いキー）', () => {
     );
   });
 
-  it('引用符の無い値も伏せる', () => {
-    expect(sanitizeBody('{token: abc123, count: 3}')).toBe(`{token: ${REDACTED}, count: 3}`);
+  it('引用符の無い値は対象にしない（JSON 側の扱いと揃える）', () => {
+    // `"code": 404` を残すのに `code: 404` だけ伏せると一貫しない。`code` や `auth` は
+    // 既定の伏せ字キーにあるため、数値まで対象にすると HTTP ステータスやエラーコードが
+    // 読めなくなる
+    const body = '{ error: { code: 404, message: "not found" } }';
+    expect(sanitizeBody(body)).toBe(body);
+  });
+
+  it('引用符付きの文字列値なら伏せる', () => {
+    expect(sanitizeBody('{ code: "auth-code-1", count: 3 }')).toBe(
+      `{ code: "${REDACTED}", count: 3 }`,
+    );
+  });
+
+  it('JSON でも引用符なしでも同じキーは同じ結果になる', () => {
+    // 形式が違うだけで守られ方が変わらないこと
+    expect(sanitizeBody('{"password": "hunter2"}')).toContain(REDACTED);
+    expect(sanitizeBody('{password: "hunter2"}')).toContain(REDACTED);
+    expect(sanitizeBody('{"password": 42}')).toBe('{"password": 42}');
+    expect(sanitizeBody('{password: 42}')).toBe('{password: 42}');
   });
 
   it('URL のスキームやスタックの行番号を巻き込まない', () => {

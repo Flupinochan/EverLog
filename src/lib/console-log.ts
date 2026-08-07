@@ -442,7 +442,9 @@ function capEntry(
   const capped: string[] = [];
   let used = Math.min(text.length, max);
   for (const arg of args) {
-    if (used + arg.length > max) break;
+    // 入らない 1 つで打ち切らない。大きい引数が 1 つ混ざっただけで、その後ろの
+    // 小さな引数まで巻き添えで消える
+    if (used + arg.length > max) continue;
     capped.push(arg);
     used += arg.length;
   }
@@ -475,7 +477,11 @@ export function formatConsoleArgs(
     // 第 1 引数が文字列のときだけ書式指定子を解釈する。DevTools と同じ条件
     let text: string;
     if (typeof limited[0] === 'string') {
-      const formatted = applyFormat(limited[0], limited.slice(1), options);
+      // テンプレートは生の値ではなくプレビュー（＝ `args[0]`）を使う。生のまま渡すと
+      // ここだけが長さの上限を通らず、巨大な第 1 引数がそのまま `text` に載る。
+      // その結果 `capEntry()` の予算を食い尽くし、引数の内訳が丸ごと落ちる
+      const template = args[0] ?? '';
+      const formatted = applyFormat(template, limited.slice(1), options);
       const remaining = args.slice(1 + formatted.consumed);
       text = [formatted.text, ...remaining].join(' ');
     } else {
@@ -517,6 +523,52 @@ export function parseStackTop(stack: string | null | undefined): string | null {
     if (matched !== null) return matched[1] ?? null;
   }
   return null;
+}
+
+/** 文字列でなければ既定値に寄せる。 */
+function asString(value: unknown, fallback = ''): string {
+  return typeof value === 'string' ? value : fallback;
+}
+
+/** 文字列でなければ null に寄せる。 */
+function asNullableString(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+/**
+ * ページから届いた値を妥当な `CapturedConsoleEntry` に整える。純粋関数。
+ *
+ * **保存経路の入口では必ずこれを通す。** エントリを運ぶ CustomEvent はページからも
+ * 発火でき、`args` が配列でないといった壊れた形が届きうる。素通しすると
+ * サニタイズ層が型を前提にしているところで例外になり、同じバッチに載っていた
+ * 正しいエントリまで巻き添えで失う。
+ *
+ * 形が違うフィールドは既定値へ寄せ、エントリ自体は捨てない。記録が起きた事実は
+ * 残すという方針（`attachBody()` がボディを取れなくてもエントリを残すのと同じ）。
+ */
+export function normalizeCapturedEntry(raw: unknown): CapturedConsoleEntry | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+
+  const source = raw as Record<string, unknown>;
+  const ts = typeof source.ts === 'number' && Number.isFinite(source.ts) ? source.ts : Date.now();
+
+  const args = Array.isArray(source.args)
+    ? source.args.filter((arg): arg is string => typeof arg === 'string')
+    : [];
+
+  return {
+    ts,
+    pageUrl: asString(source.pageUrl),
+    level: normalizeConsoleLevel(source.level),
+    text: asString(source.text),
+    args,
+    source: asNullableString(source.source),
+    stack: asNullableString(source.stack),
+    argsStatus:
+      source.argsStatus === 'truncated' || source.argsStatus === 'unserializable'
+        ? source.argsStatus
+        : 'stored',
+  };
 }
 
 /** 保存されていた値を妥当な `ConsoleLevel` に整える。知らない値は `log` に寄せる。 */

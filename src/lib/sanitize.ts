@@ -249,16 +249,22 @@ function redactQueryLikeString(text: string, redactKeys: Set<string>): string {
 }
 
 /**
- * 引用符の無いキーの `key: value`。
+ * 引用符の無いキーに、引用符付きの文字列値が続く形（`{access_token: "..."}`）。
  *
- * コンソールの引数プレビュー（`{access_token: "..."}`）と、JavaScript のソースが
- * レスポンスとして返る場合（`{ apiKey: "..." }`）を拾う。JSON のようにキーが
- * 引用符で囲まれていないため、上の JSON 用のパターンでは当たらない。
+ * コンソールの引数プレビューと、JavaScript のソースがレスポンスとして返る場合
+ * （`{ apiKey: "..." }`）を拾う。JSON のようにキーが引用符で囲まれていないため、
+ * 上の JSON 用のパターンでは当たらない。
+ *
+ * **値は引用符付きの文字列に限る。** 上の JSON 用のパターンも文字列値だけを対象に
+ * しており、そこを揃えないと `{"code": 404}` は残るのに `{code: 404}` は伏せられる、
+ * という一貫しない結果になる。`code` や `auth` のような一般的な語は既定の
+ * 伏せ字キーに入っているため、数値や識別子まで対象にすると HTTP ステータスや
+ * エラーコードのような、伏せる必要のない値まで読めなくなる。
  *
  * 直前の 1 文字を見るのは、URL のスキーム（`https://`）やスタックの行番号
  * （`a.js:12:34`）を巻き込まないため。`{` `,` `[` か空白の後ろに限る。
  */
-const UNQUOTED_KEY_PATTERN = /([{,[\s]|^)([\w.$-]+)(\s*:\s*)("(?:[^"\\]|\\.)*"|[^\s,;{}[\]]+)/g;
+const UNQUOTED_KEY_PATTERN = /([{,[\s]|^)([\w.$-]+)(\s*:\s*)("(?:[^"\\]|\\.)*")/g;
 
 /**
  * ボディからトークンを除去する。
@@ -282,12 +288,9 @@ export function sanitizeBody(
   // 2. 引用符の無いキー（access_token: "..."）
   result = result.replace(
     UNQUOTED_KEY_PATTERN,
-    (match, prefix: string, key: string, separator: string, value: string) => {
-      if (!isRedactKey(key, redactKeys)) return match;
-      // 値が引用符付きなら引用符ごと残す。囲みを外すと構造が変わって読めなくなる
-      const replaced = value.startsWith('"') ? `"${REDACTED}"` : REDACTED;
-      return `${prefix}${key}${separator}${replaced}`;
-    },
+    (match, prefix: string, key: string, separator: string) =>
+      // 引用符ごと残す。囲みを外すと構造が変わって読めなくなる
+      isRedactKey(key, redactKeys) ? `${prefix}${key}${separator}"${REDACTED}"` : match,
   );
 
   // 3. フォームエンコード（access_token=...）と、文字列中に埋め込まれた URL のクエリ

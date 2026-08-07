@@ -441,7 +441,9 @@ export async function getStats(): Promise<StorageStats> {
     }),
   );
 
-  const console = await reduceStore<StoredConsoleLog, { count: number; bytes: number }>(
+  // 変数名を `console` にしない。この関数のなかでグローバルの `console` が
+  // 隠れてしまい、後から診断ログを 1 行足したときに黙って壊れる
+  const consoleLogs = await reduceStore<StoredConsoleLog, { count: number; bytes: number }>(
     db,
     CONSOLE_STORE,
     { count: 0, bytes: 0 },
@@ -454,8 +456,8 @@ export async function getStats(): Promise<StorageStats> {
   return {
     count: network.count,
     bodyBytes: network.bodyBytes,
-    consoleCount: console.count,
-    consoleBytes: console.bytes,
+    consoleCount: consoleLogs.count,
+    consoleBytes: consoleLogs.bytes,
   };
 }
 

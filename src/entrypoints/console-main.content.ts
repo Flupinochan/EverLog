@@ -11,6 +11,24 @@
  *
  * ここでの役割は「拾う・整える・渡す」まで。記録の可否と URL フィルタの判定は
  * 設定を読めるブリッジ側にあり、この層は渡されたフラグに従うだけにする。
+ *
+ * ## この層はページから隔離されていない
+ *
+ * MAIN world はページ自身の世界であり、ページは以下をすべて行える。
+ *
+ * - `everlog:capture-state` を偽装して、自分のページの記録だけを止める
+ * - `everlog:bridge-ready` を偽装して、溜めていた分を受け手のいない window へ流させる
+ * - こちらが差し替えた `console` をさらに差し替える
+ *
+ * これは MAIN world で `console` を包むという方式そのものに付いてくる制約で、
+ * この層のなかでは塞げない（合図に nonce を混ぜても、その nonce 自体がページから
+ * 読める）。塞ぐには `chrome.debugger` が要るが、DevTools を開くとデタッチされる
+ * ため本拡張機能では使えない（`wxt.config.ts` の注記を参照）。
+ *
+ * したがって**この層から届く値は信頼しない**。保存経路の入口である background で
+ * `normalizeCapturedEntry()` を通し、形の壊れた値でバッチ全体を失わないようにしている。
+ * 記録が止められる可能性については、popup の表示と実際の記録がずれうるという形で
+ * 利用者に影響する。調査対象のページが敵対的な場合はこの方式では検知できない。
  */
 
 import {
@@ -57,6 +75,8 @@ function install(): void {
 
   const limiter = createRateLimiter();
   const pending: string[] = [];
+  /** バッファから溢れて捨てた件数。ブリッジが繋がったときに 1 件のログとして残す */
+  let pendingDropped = 0;
   let bridgeReady = false;
 
   /**
@@ -74,16 +94,40 @@ function install(): void {
    */
   let capturing = false;
 
+  function send(payload: string): void {
+    dispatch(new CustomEvent(CONSOLE_ENTRY_EVENT, { detail: payload }));
+  }
+
   function emit(entry: CapturedConsoleEntry): void {
     const payload = stringify(entry);
     if (!bridgeReady) {
       // 古いものから捨てる。溢れているのは大量に出ている最中であり、
-      // 直近のほうが原因に近い
-      if (pending.length >= PENDING_LIMIT) pending.shift();
+      // 直近のほうが原因に近い。捨てた件数は数えておき、繋がったときに報告する
+      if (pending.length >= PENDING_LIMIT) {
+        pending.shift();
+        pendingDropped += 1;
+      }
       pending.push(payload);
       return;
     }
-    dispatch(new CustomEvent(CONSOLE_ENTRY_EVENT, { detail: payload }));
+    send(payload);
+  }
+
+  /**
+   * 値から `stack` を読む。読めなければ null。
+   *
+   * getter が例外を投げることがあるため、素で読まない。ここで漏らすと、直列化まで
+   * 成功していたエントリが最後の 1 手で丸ごと落ちる（`previewValue()` が
+   * プロパティを読むときに try/catch しているのと同じ理由）。
+   */
+  function readStack(value: unknown): string | null {
+    if (typeof value !== 'object' || value === null) return null;
+    try {
+      const stack = (value as { stack?: unknown }).stack;
+      return typeof stack === 'string' ? stack : null;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -104,14 +148,13 @@ function install(): void {
       callSite = undefined;
     }
 
-    const errorArg = args.find(
-      (arg): arg is { stack: string } =>
-        typeof arg === 'object' &&
-        arg !== null &&
-        typeof (arg as { stack?: unknown }).stack === 'string',
-    );
+    let fromArg: string | null = null;
+    for (const arg of args) {
+      fromArg = readStack(arg);
+      if (fromArg !== null) break;
+    }
 
-    const stack = errorArg?.stack ?? (STACK_LEVELS.has(level) ? (callSite ?? null) : null);
+    const stack = fromArg ?? (STACK_LEVELS.has(level) ? (callSite ?? null) : null);
     return { source: parseStackTop(callSite), stack };
   }
 
@@ -148,6 +191,21 @@ function install(): void {
     }, DEFAULT_RATE_LIMIT.windowMs);
   }
 
+  /**
+   * レートリミッタを通す。通れば true。
+   *
+   * 記録の入口はここ 1 つに揃える。`console.*` だけを通して未捕捉例外を素通しに
+   * すると、例外を投げ続けるページで上限が効かない。
+   */
+  function admit(at: number): boolean {
+    if (!limiter.allow(at)) {
+      scheduleDropNotice();
+      return false;
+    }
+    reportDropped(at);
+    return true;
+  }
+
   function capture(level: ConsoleLevel, args: readonly unknown[]): void {
     if (!enabled || capturing) return;
 
@@ -156,12 +214,7 @@ function install(): void {
       const at = now();
       // 上限の判定は直列化より先に行う。抑えたいのは大量発生時の負荷そのものであり、
       // 作ってから捨てるのでは払う手間が変わらない
-      if (!limiter.allow(at)) {
-        scheduleDropNotice();
-        return;
-      }
-
-      reportDropped(at);
+      if (!admit(at)) return;
 
       const { text, args: preview, argsStatus } = formatConsoleArgs(args);
       const { source, stack } = resolveOrigin(level, args);
@@ -190,52 +243,85 @@ function install(): void {
   }
 
   window.addEventListener('error', (event) => {
-    if (!enabled) return;
-    const at = now();
-    const source =
-      typeof event.filename === 'string' && event.filename !== ''
-        ? `${event.filename}:${event.lineno}:${event.colno}`
-        : null;
-    const stack = event.error instanceof Error ? event.error.stack : null;
+    if (!enabled || capturing) return;
 
-    emit({
-      ts: at,
-      pageUrl: location.href,
-      level: 'uncaught',
-      text: event.message,
-      args: [],
-      source,
-      stack: stack ?? null,
-      argsStatus: 'stored',
-    });
+    capturing = true;
+    try {
+      const at = now();
+      if (!admit(at)) return;
+
+      const source =
+        typeof event.filename === 'string' && event.filename !== ''
+          ? `${event.filename}:${event.lineno}:${event.colno}`
+          : null;
+
+      emit({
+        ts: at,
+        pageUrl: location.href,
+        level: 'uncaught',
+        text: event.message,
+        args: [],
+        source,
+        stack: readStack(event.error),
+        argsStatus: 'stored',
+      });
+    } catch {
+      // 記録の失敗でページのエラー処理を巻き込まない
+    } finally {
+      capturing = false;
+    }
   });
 
   window.addEventListener('unhandledrejection', (event) => {
-    if (!enabled) return;
-    const at = now();
-    const { text, args, argsStatus } = formatConsoleArgs([event.reason]);
-    const stack =
-      typeof (event.reason as { stack?: unknown })?.stack === 'string'
-        ? ((event.reason as { stack: string }).stack)
-        : null;
+    if (!enabled || capturing) return;
 
-    emit({
-      ts: at,
-      pageUrl: location.href,
-      level: 'unhandledrejection',
-      text,
-      args,
-      source: parseStackTop(stack),
-      stack,
-      argsStatus,
-    });
+    capturing = true;
+    try {
+      const at = now();
+      if (!admit(at)) return;
+
+      const { text, args, argsStatus } = formatConsoleArgs([event.reason]);
+      const stack = readStack(event.reason);
+
+      emit({
+        ts: at,
+        pageUrl: location.href,
+        level: 'unhandledrejection',
+        text,
+        args,
+        source: parseStackTop(stack),
+        stack,
+        argsStatus,
+      });
+    } catch {
+      // 同上
+    } finally {
+      capturing = false;
+    }
   });
 
   window.addEventListener(BRIDGE_READY_EVENT, () => {
     bridgeReady = true;
-    for (const payload of pending.splice(0)) {
-      dispatch(new CustomEvent(CONSOLE_ENTRY_EVENT, { detail: payload }));
+
+    // 溢れて捨てた分を先に報告する。件数だけでも残さないと、ページ読み込み直後の
+    // ログが「元から出ていなかった」のか「捨てられた」のか区別できない
+    if (pendingDropped > 0) {
+      send(
+        stringify({
+          ts: now(),
+          pageUrl: location.href,
+          level: 'warn',
+          text: describeDroppedEntries(pendingDropped),
+          args: [],
+          source: null,
+          stack: null,
+          argsStatus: 'stored',
+        } satisfies CapturedConsoleEntry),
+      );
+      pendingDropped = 0;
     }
+
+    for (const payload of pending.splice(0)) send(payload);
   });
 
   window.addEventListener(CAPTURE_STATE_EVENT, (event) => {

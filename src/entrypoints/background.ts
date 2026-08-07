@@ -14,7 +14,7 @@
  */
 
 import { browser } from 'wxt/browser';
-import { isConsoleBatchMessage, type CapturedConsoleEntry } from '@/lib/console-log';
+import { isConsoleBatchMessage, normalizeCapturedEntry } from '@/lib/console-log';
 import { addConsoleLogs } from '@/lib/db';
 import { shouldCaptureUrl } from '@/lib/network-log';
 import { sanitizeConsoleEntry } from '@/lib/sanitize';
@@ -49,10 +49,7 @@ async function refreshBadge(): Promise<void> {
  * 記録の可否をここでも読み直す。バッチが飛んでいる最中に記録を OFF にした分は、
  * ページ側の判定をすり抜けて届く。`devtools/main.ts` の `saveEntry()` と同じ二段構え。
  */
-async function saveConsoleEntries(
-  entries: readonly CapturedConsoleEntry[],
-  tabId: number | undefined,
-): Promise<void> {
+async function saveConsoleEntries(entries: readonly unknown[], tabId: number | undefined): Promise<void> {
   if (entries.length === 0) return;
   // タブが特定できない経路から届いたものは記録しない。タブで絞り込めないログは
   // 一覧で切り分けられず、出所も追えないため
@@ -61,7 +58,12 @@ async function saveConsoleEntries(
   const settings = await loadSettings(browser.storage.local);
   if (!settings.consoleRecording) return;
 
+  // ここが保存経路の信頼境界になる。エントリを運ぶ CustomEvent はページからも
+  // 発火できるため、形を整えてからでないとサニタイズ層で例外になり、同じバッチの
+  // 正しいエントリまで失う
   const sanitized = entries
+    .map(normalizeCapturedEntry)
+    .filter((entry) => entry !== null)
     .filter((entry) => shouldCaptureUrl(entry.pageUrl, settings.urlFilter))
     .map((entry) => sanitizeConsoleEntry({ ...entry, tabId }));
 
@@ -92,7 +94,11 @@ export default defineBackground(() => {
   // コンソールログの受け口。ブリッジ（`console-bridge.content.ts`）だけが送ってくる
   browser.runtime.onMessage.addListener((message, sender) => {
     if (!isConsoleBatchMessage(message)) return;
-    void saveConsoleEntries(message.entries, sender.tab?.id);
+    // 保存の失敗を握りつぶさず、ここで必ず受け止める。投げっぱなしにすると
+    // 想定外の形が届いたときに unhandled rejection になり、原因が追えない
+    void saveConsoleEntries(message.entries, sender.tab?.id).catch((error: unknown) => {
+      console.error('[EverLog] failed to handle console batch', error);
+    });
     // 応答は返さない。送信側は結果を待っておらず、true を返して口を開けたままにすると
     // Service Worker が保存の間ずっと起きていることになる
   });
