@@ -91,10 +91,12 @@ export function getContentAsync(
  * @param handler 組み立て済みエントリの引き渡し先。次フェーズではここを
  *   保存層への送信に差し替える
  * @param options ボディを取得する条件
- * @param shouldCapture この URL を記録するか。false ならエントリを組み立てず、
- *   `getContent()` も呼ばずに捨てる。値ではなく関数で受けるのは `getContext` と
- *   同じ理由で、設定が購読中に変わるため。値で渡すと変更のたびに購読を張り直す
- *   ことになり、その隙間でリクエストを取りこぼす
+ * @param shouldCapture この URL を記録するか。false を返した時点でエントリを
+ *   組み立てず、`getContent()` も呼ばずに捨てる。判定できるのは呼ばれた時点の
+ *   基準だけなので、呼び出し側がまだ基準を読み終えていない間に何を返すかは
+ *   呼び出し側の責任になる。値ではなく関数で受けるのは `getContext` と同じ理由で、
+ *   基準が購読中に変わるため。値で渡すと変更のたびに購読を張り直すことになり、
+ *   その隙間でリクエストを取りこぼす
  * @returns 記録を停止する関数
  */
 export function startNetworkCapture(

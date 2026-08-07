@@ -139,6 +139,12 @@ const settingsReady = loadSettings(browser.storage.local).then((settings) => {
 // 設定を読み終える前から購読は張っておく。ここを待つと、ページの読み込み中に
 // DevTools を開いた場合などに最初の数件を取りこぼす。記録が OFF だった場合は
 // 上の読み込みが購読を外し、その間に拾った分は saveEntry() が捨てる。
+//
+// この間だけは urlFilter が既定値（フィルタ無し）なので、除外対象の URL でも
+// getContent() まで進む。保存は saveEntry() の再判定が止めるため記録には残らないが、
+// 本来触らないはずのボディを一瞬だけメモリに載せることにはなる。設定の読み込みは
+// storage の 1 往復で、それより早く終わるリクエストを捨てるほうが損失が大きいと
+// 判断してこの順にしている。
 startCapture();
 
 // popup で切り替えたときに、DevTools を開き直さずに反映されるようにする

@@ -54,20 +54,31 @@ export function App({
   const savedPatterns = settings.urlFilter.patterns;
   const patternValue = patternDraft ?? formatPatternLines(savedPatterns);
 
-  // `urlFilter` の patch はマージではなく置換されるため、常に完成した値を渡す
+  /**
+   * 入力欄の内容を保存する。
+   *
+   * `urlFilter` の patch は置換なので `mode` も一緒に渡す必要があるが、`settings` の
+   * `mode` は storage の往復を経ていない古い値でありうる。ラジオを押した直後に適用すると
+   * 切り替えたばかりのモードを巻き戻してしまうため、保存直前の値から組み立てる。
+   *
+   * 編集内容を手放すのは保存できたときだけ。失敗したら入力欄をそのまま残し、
+   * エラー表示を見てやり直せるようにする。
+   */
   const applyPatterns = useCallback(() => {
-    update({
-      urlFilter: { mode: settings.urlFilter.mode, patterns: parsePatternLines(patternValue) },
-    });
-    setPatternDraft(null);
-  }, [patternValue, settings.urlFilter.mode, update]);
+    const patterns = parsePatternLines(patternValue);
+    void update((current) => ({ urlFilter: { mode: current.urlFilter.mode, patterns } })).then(
+      (saved) => {
+        if (saved) setPatternDraft(null);
+      },
+    );
+  }, [patternValue, update]);
 
   const changeMode = useCallback(
     (mode: UrlFilterMode) => {
       // 編集中の入力欄は残す。モードの切り替えで打ちかけの内容を捨てない
-      update({ urlFilter: { mode, patterns: savedPatterns } });
+      void update((current) => ({ urlFilter: { mode, patterns: current.urlFilter.patterns } }));
     },
-    [savedPatterns, update],
+    [update],
   );
 
   /** 全削除の確認待ちか。押し間違いで消えないよう 2 段階にする */
@@ -107,7 +118,7 @@ export function App({
       <RecordingToggle
         recording={settings.recording}
         disabled={settingsLoading}
-        onChange={(recording) => update({ recording })}
+        onChange={(recording) => void update({ recording })}
       />
       <UrlFilterEditor
         mode={settings.urlFilter.mode}

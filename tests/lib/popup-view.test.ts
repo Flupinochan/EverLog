@@ -110,11 +110,23 @@ describe('urlFilterNotice', () => {
     expect(urlFilterNotice('deny', [])).toBeNull();
   });
 
-  it('deny に * があればすべて除外されると伝える', () => {
-    expect(urlFilterNotice('deny', ['*'])).toContain('記録されません');
+  it('deny に全 URL へ一致するパターンがあれば何も記録されないと伝える', () => {
+    for (const pattern of ['*', '**', '*/*', '/', '.', 'http']) {
+      expect(urlFilterNotice('deny', [pattern])).toContain('何も記録されません');
+    }
   });
 
-  it('allow の * は全件記録なので警告しない', () => {
+  it('絞り込めているパターンは全一致と見なさない', () => {
+    for (const pattern of ['*/oauth/*', 'example.com', 'https://api.*.com/*', '.json']) {
+      expect(urlFilterNotice('deny', [pattern])).toBeNull();
+    }
+  });
+
+  it('全一致のパターンが 1 つでも混ざっていれば伝える', () => {
+    expect(urlFilterNotice('deny', ['*/oauth/*', '/'])).toContain('何も記録されません');
+  });
+
+  it('allow の全一致は全件記録なので警告しない', () => {
     expect(urlFilterNotice('allow', ['*'])).toBeNull();
   });
 

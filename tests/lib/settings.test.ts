@@ -176,6 +176,31 @@ describe('saveSettings', () => {
     expect(saved.urlFilter.patterns).toEqual(['/b']);
   });
 
+  it('patch を関数で渡すと保存直前の値を見て組み立てられる', async () => {
+    const { storage } = createFakeStorage({
+      [SETTINGS_KEY]: { recording: true, urlFilter: { mode: 'allow', patterns: ['/a'] } },
+    });
+
+    // 呼び出し側が古い mode を持っていても、保存済みの mode を壊さない
+    const saved = await saveSettings(storage, (current) => ({
+      urlFilter: { mode: current.urlFilter.mode, patterns: ['/b'] },
+    }));
+
+    expect(saved.urlFilter).toEqual({ mode: 'allow', patterns: ['/b'] });
+  });
+
+  it('関数の patch には正規化済みの現在値が渡る', async () => {
+    const { storage } = createFakeStorage({ [SETTINGS_KEY]: { urlFilter: { mode: 'bogus' } } });
+    let seen: unknown = null;
+
+    await saveSettings(storage, (current) => {
+      seen = current;
+      return {};
+    });
+
+    expect(seen).toEqual(DEFAULT_SETTINGS);
+  });
+
   it('書き込みの失敗は呼び出し側に伝える', async () => {
     const storage: SettingsStorageArea = {
       get: async () => ({}),

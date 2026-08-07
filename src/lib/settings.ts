@@ -112,6 +112,11 @@ export async function loadSettings(area: SettingsStorageArea): Promise<Settings>
 }
 
 /**
+ * 書き換える内容。関数で渡すと、保存直前に読み直した値を見て patch を組み立てられる。
+ */
+export type SettingsPatch = Partial<Settings> | ((current: Settings) => Partial<Settings>);
+
+/**
  * 設定の一部を書き換え、確定した全体を返す。
  *
  * 書き込みの失敗は握りつぶさない。UI 側で「切り替えたつもりが切り替わっていない」
@@ -119,13 +124,19 @@ export async function loadSettings(area: SettingsStorageArea): Promise<Settings>
  *
  * patch は最上位のフィールド単位で適用する。`urlFilter` のようなネストした値は
  * マージではなく丸ごと置換になるため、呼び出し側は常に完成した値を渡すこと。
+ *
+ * その「完成した値」を組み立てるのに他のフィールドが要る場合（`urlFilter.patterns`
+ * だけ差し替えたいが `mode` は今の値のままにしたい、など）は patch を関数で渡す。
+ * UI が持っている値は保存の往復を経ていない古いものでありうるため、それを混ぜると
+ * 直前の変更を黙って巻き戻してしまう。
  */
 export async function saveSettings(
   area: SettingsStorageArea,
-  patch: Partial<Settings>,
+  patch: SettingsPatch,
 ): Promise<Settings> {
   const current = await loadSettings(area);
-  const next = normalizeSettings({ ...current, ...patch });
+  const resolved = typeof patch === 'function' ? patch(current) : patch;
+  const next = normalizeSettings({ ...current, ...resolved });
   await area.set({ [SETTINGS_KEY]: next });
   return next;
 }

@@ -5,7 +5,21 @@
  * と同じ方針）。popup のコンポーネントは「ここで作った値を描画するだけ」に保つ。
  */
 
-import { MAX_URL_PATTERNS, type UrlFilterMode } from './network-log';
+import { MAX_URL_PATTERNS, matchesUrlPatterns, type UrlFilterMode } from './network-log';
+
+/**
+ * 「すべてに一致するか」を試すための URL。共通部分がほとんど無い 2 つを選ぶ。
+ *
+ * 任意のパターンが全 URL に一致するかを厳密に判定することはできないため、両方に
+ * 当たったものを事実上の全一致と見なす。`*` や `**` はもちろん、`/` や `*​/*` や `.`
+ * のような「絞ったつもり」のパターンも拾える。多めに警告しても実害は無い。
+ */
+const CATCH_ALL_PROBES = ['https://example.com/', 'http://192.0.2.1/b?c=d'];
+
+/** 事実上すべての URL に一致するパターンか。判定は `matchesUrlPatterns` に委ねる。 */
+function isCatchAllPattern(pattern: string): boolean {
+  return CATCH_ALL_PROBES.every((probe) => matchesUrlPatterns(probe, [pattern]));
+}
 
 /**
  * 入力欄の 1 行 1 パターンを配列にする。空行と前後の空白、重複は落とす。
@@ -73,8 +87,8 @@ export function urlFilterNotice(mode: UrlFilterMode, patterns: string[]): string
       ? 'パターンが空のため、すべてのリクエストを記録します'
       : null;
   }
-  if (mode === 'deny' && patterns.some((pattern) => pattern === '*')) {
-    return '`*` があるため、すべてのリクエストが記録されません';
+  if (mode === 'deny' && patterns.some(isCatchAllPattern)) {
+    return 'すべての URL に一致するパターンがあるため、何も記録されません';
   }
   return null;
 }
