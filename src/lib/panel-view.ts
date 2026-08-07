@@ -6,7 +6,8 @@
  * 移すと、描画環境なしでは検証できなくなるため、この分離を崩さない。
  */
 
-import type { LogFilter } from './db';
+import type { ArgsStatus, ConsoleLevel } from './console-log';
+import type { ConsoleLogFilter, LogFilter } from './db';
 import type { BodyStatus } from './network-log';
 
 /** フィルタ欄の入力値。すべて文字列で持ち、`buildFilter()` で `LogFilter` へ変換する。 */
@@ -104,6 +105,142 @@ export function buildFilter(form: FilterForm, currentTabId?: number): LogFilter 
   if (form.onlyCurrentTab && currentTabId !== undefined) filter.tabId = currentTabId;
 
   return filter;
+}
+
+/**
+ * パネルで見ている対象。
+ *
+ * ネットワークとコンソールは保存の仕組みも絞り込み条件も違うため、1 つの一覧に
+ * 混ぜず切り替える。
+ */
+export type PanelView = 'network' | 'console';
+
+/** レベル絞り込みのチェックボックスに出す順。深刻なものを左に置く。 */
+export const CONSOLE_LEVEL_OPTIONS: readonly ConsoleLevel[] = [
+  'error',
+  'uncaught',
+  'unhandledrejection',
+  'assert',
+  'warn',
+  'log',
+  'info',
+  'debug',
+  'trace',
+];
+
+/** レベルの表示名。`uncaught` などはそのままでは何を指すか伝わらない。 */
+export function describeConsoleLevel(level: ConsoleLevel): string {
+  switch (level) {
+    case 'uncaught':
+      return '未捕捉';
+    case 'unhandledrejection':
+      return '未処理 reject';
+    case 'assert':
+      return 'assert';
+    default:
+      return level;
+  }
+}
+
+/** コンソール側のフィルタ欄の入力値。 */
+export interface ConsoleFilterForm {
+  /** 本文の部分一致 */
+  textIncludes: string;
+  /** ページ URL の部分一致 */
+  pageUrlIncludes: string;
+  /** 対象レベル。空配列は「絞らない」 */
+  levels: ConsoleLevel[];
+  /** 期間の下限（`<input type="datetime-local">` の値） */
+  from: string;
+  /** 期間の上限（同上） */
+  to: string;
+  onlyCurrentTab: boolean;
+}
+
+export const EMPTY_CONSOLE_FILTER_FORM: ConsoleFilterForm = {
+  textIncludes: '',
+  pageUrlIncludes: '',
+  levels: [],
+  from: '',
+  to: '',
+  onlyCurrentTab: false,
+};
+
+/**
+ * 入力値を `queryConsoleLogs()` に渡す `ConsoleLogFilter` へ変換する。
+ *
+ * `buildFilter()` と同じく、空欄と解釈できない値は条件そのものを積まない。
+ */
+export function buildConsoleFilter(
+  form: ConsoleFilterForm,
+  currentTabId?: number,
+): ConsoleLogFilter {
+  const filter: ConsoleLogFilter = {};
+
+  const textIncludes = form.textIncludes.trim();
+  if (textIncludes !== '') filter.textIncludes = textIncludes;
+
+  const pageUrlIncludes = form.pageUrlIncludes.trim();
+  if (pageUrlIncludes !== '') filter.pageUrlIncludes = pageUrlIncludes;
+
+  if (form.levels.length > 0) filter.levels = form.levels;
+
+  const from = parseDateTimeLocal(form.from);
+  if (from !== undefined) filter.from = from;
+
+  const to = parseRangeEnd(form.to);
+  if (to !== undefined) filter.to = to;
+
+  if (form.onlyCurrentTab && currentTabId !== undefined) filter.tabId = currentTabId;
+
+  return filter;
+}
+
+/** チェックボックスの ON/OFF を配列に反映する。順序は `CONSOLE_LEVEL_OPTIONS` に揃える。 */
+export function toggleLevel(
+  levels: readonly ConsoleLevel[],
+  level: ConsoleLevel,
+  checked: boolean,
+): ConsoleLevel[] {
+  const next = new Set(levels);
+  if (checked) next.add(level);
+  else next.delete(level);
+  return CONSOLE_LEVEL_OPTIONS.filter((option) => next.has(option));
+}
+
+/** レベルの分類。表示の色分けに使う（`classifyStatus()` と同じ役割）。 */
+export type LevelClass = 'error' | 'warn' | 'info' | 'debug';
+
+export function classifyLevel(level: ConsoleLevel): LevelClass {
+  switch (level) {
+    case 'error':
+    case 'assert':
+    case 'uncaught':
+    case 'unhandledrejection':
+      return 'error';
+    case 'warn':
+      return 'warn';
+    case 'debug':
+    case 'trace':
+      return 'debug';
+    default:
+      return 'info';
+  }
+}
+
+/**
+ * 引数がそのまま保存されなかった理由の説明。
+ * `stored` は理由がないため空文字を返す（`describeBodyStatus()` と同じ）。
+ */
+export function describeArgsStatus(status: ArgsStatus): string {
+  switch (status) {
+    case 'stored':
+      return '';
+    case 'truncated':
+      return '上限を超えたため、引数の一部は省略されています';
+    case 'unserializable':
+      return '引数を文字列に変換できませんでした';
+  }
 }
 
 function pad(value: number, length: number): string {

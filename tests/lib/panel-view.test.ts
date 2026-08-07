@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CONSOLE_LEVEL_OPTIONS,
+  EMPTY_CONSOLE_FILTER_FORM,
   EMPTY_FILTER_FORM,
+  buildConsoleFilter,
   buildFilter,
+  classifyLevel,
+  describeArgsStatus,
+  describeConsoleLevel,
+  toggleLevel,
   EXPORT_CONFIRM_BYTES,
   EXPORT_MAX_BYTES,
   classifyStatus,
@@ -261,5 +268,113 @@ describe('urlPath', () => {
 
   it('パースできない URL はそのまま', () => {
     expect(urlPath('not a url')).toBe('not a url');
+  });
+});
+
+describe('buildConsoleFilter', () => {
+  it('空欄の条件は積まない', () => {
+    expect(buildConsoleFilter(EMPTY_CONSOLE_FILTER_FORM)).toEqual({});
+  });
+
+  it('本文とページ URL の部分一致を積む', () => {
+    const filter = buildConsoleFilter({
+      ...EMPTY_CONSOLE_FILTER_FORM,
+      textIncludes: '  失敗  ',
+      pageUrlIncludes: 'example.com',
+    });
+
+    expect(filter).toEqual({ textIncludes: '失敗', pageUrlIncludes: 'example.com' });
+  });
+
+  it('レベルが空配列なら条件を積まない（全件を出す）', () => {
+    expect(buildConsoleFilter({ ...EMPTY_CONSOLE_FILTER_FORM, levels: [] }).levels).toBeUndefined();
+  });
+
+  it('選んだレベルを積む', () => {
+    const filter = buildConsoleFilter({ ...EMPTY_CONSOLE_FILTER_FORM, levels: ['error', 'warn'] });
+
+    expect(filter.levels).toEqual(['error', 'warn']);
+  });
+
+  it('期間はネットワーク側と同じ解釈にする（終端は粒度いっぱいまで含む）', () => {
+    const filter = buildConsoleFilter({
+      ...EMPTY_CONSOLE_FILTER_FORM,
+      from: '2026-08-06T12:00',
+      to: '2026-08-06T12:30',
+    });
+    const network = buildFilter({ ...EMPTY_FILTER_FORM, from: '2026-08-06T12:00', to: '2026-08-06T12:30' });
+
+    expect(filter.from).toBe(network.from);
+    expect(filter.to).toBe(network.to);
+  });
+
+  it('このタブのみはタブが分かる場合だけ積む', () => {
+    const form = { ...EMPTY_CONSOLE_FILTER_FORM, onlyCurrentTab: true };
+
+    expect(buildConsoleFilter(form, 42).tabId).toBe(42);
+    expect(buildConsoleFilter(form, undefined).tabId).toBeUndefined();
+  });
+});
+
+describe('toggleLevel', () => {
+  it('追加と削除ができる', () => {
+    expect(toggleLevel([], 'warn', true)).toEqual(['warn']);
+    expect(toggleLevel(['warn', 'error'], 'warn', false)).toEqual(['error']);
+  });
+
+  it('並び順は選んだ順ではなく表示順に揃える', () => {
+    // チェックの付け外しで一覧の条件表示が入れ替わらないようにする
+    const result = toggleLevel(['log'], 'error', true);
+
+    expect(result).toEqual(['error', 'log']);
+  });
+
+  it('重複しては入らない', () => {
+    expect(toggleLevel(['error'], 'error', true)).toEqual(['error']);
+  });
+});
+
+describe('classifyLevel', () => {
+  it('未捕捉例外や assert は error として扱う', () => {
+    expect(classifyLevel('error')).toBe('error');
+    expect(classifyLevel('uncaught')).toBe('error');
+    expect(classifyLevel('unhandledrejection')).toBe('error');
+    expect(classifyLevel('assert')).toBe('error');
+  });
+
+  it('warn / debug / info を分ける', () => {
+    expect(classifyLevel('warn')).toBe('warn');
+    expect(classifyLevel('debug')).toBe('debug');
+    expect(classifyLevel('trace')).toBe('debug');
+    expect(classifyLevel('log')).toBe('info');
+    expect(classifyLevel('info')).toBe('info');
+  });
+});
+
+describe('describeConsoleLevel', () => {
+  it('そのままでは伝わらないレベルに表示名を与える', () => {
+    expect(describeConsoleLevel('uncaught')).toBe('未捕捉');
+    expect(describeConsoleLevel('unhandledrejection')).toBe('未処理 reject');
+  });
+
+  it('そのままで通じるものは変えない', () => {
+    expect(describeConsoleLevel('warn')).toBe('warn');
+  });
+
+  it('選択肢のすべてに表示名がある', () => {
+    for (const level of CONSOLE_LEVEL_OPTIONS) {
+      expect(describeConsoleLevel(level)).not.toBe('');
+    }
+  });
+});
+
+describe('describeArgsStatus', () => {
+  it('stored は理由が無いので空文字', () => {
+    expect(describeArgsStatus('stored')).toBe('');
+  });
+
+  it('省略・変換失敗には理由を出す', () => {
+    expect(describeArgsStatus('truncated')).not.toBe('');
+    expect(describeArgsStatus('unserializable')).not.toBe('');
   });
 });
