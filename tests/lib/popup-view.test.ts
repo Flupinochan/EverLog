@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { MAX_URL_PATTERNS } from '@/lib/network-log';
 import {
+  describeConsoleRecording,
+  describeNetworkRecording,
   describeUrlFilterCount,
   describeUrlFilterMode,
   exceedsPatternLimit,
@@ -139,5 +141,25 @@ describe('urlFilterNotice', () => {
   it('通常の設定では何も言わない', () => {
     expect(urlFilterNotice('deny', ['*/oauth/*'])).toBeNull();
     expect(urlFilterNotice('allow', ['api.example.com'])).toBeNull();
+  });
+});
+
+describe('describeNetworkRecording / describeConsoleRecording', () => {
+  it('記録中と停止中で文言が変わる', () => {
+    expect(describeNetworkRecording(true).title).not.toBe(describeNetworkRecording(false).title);
+    expect(describeConsoleRecording(true).title).not.toBe(describeConsoleRecording(false).title);
+  });
+
+  it('ネットワークは DevTools を開いている間だけであることを明示する', () => {
+    // API 側の制約であって利用者には見えないため、書かないと「記録中なのに残らない」と映る
+    expect(describeNetworkRecording(true).detail).toContain('DevTools');
+  });
+
+  it('コンソールは DevTools を開いていなくても記録されることを明示する', () => {
+    expect(describeConsoleRecording(true).detail).toContain('DevTools を開いていなくても');
+  });
+
+  it('ネットワークとコンソールで見出しを取り違えない', () => {
+    expect(describeNetworkRecording(true).title).not.toBe(describeConsoleRecording(true).title);
   });
 });

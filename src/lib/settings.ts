@@ -15,20 +15,29 @@ import { DEFAULT_URL_FILTER, normalizeUrlFilter, type UrlFilter } from './networ
 
 /** 保存する設定の全体。 */
 export interface Settings {
-  /** 記録の ON/OFF */
+  /** ネットワークログの記録の ON/OFF */
   recording: boolean;
+  /**
+   * コンソールログの記録の ON/OFF。
+   *
+   * ネットワークとは別に持つ。記録の仕組みも記録できる範囲も違い
+   * （ネットワークは DevTools を開いている間だけ、コンソールは常時）、
+   * 片方だけ止めたい場面があるため。
+   */
+  consoleRecording: boolean;
   /** キャプチャ対象を URL で絞る設定 */
   urlFilter: UrlFilter;
 }
 
 /**
- * 既定値。記録は ON、URL フィルタは無しで始める。
+ * 既定値。記録は両方 ON、URL フィルタは無しで始める。
  *
  * 「気づいたときには既にログが流れている」場面を救うのがこの拡張機能の目的であり、
  * 既定で止まっていると目的を果たせないため。
  */
 export const DEFAULT_SETTINGS: Settings = {
   recording: true,
+  consoleRecording: true,
   urlFilter: DEFAULT_URL_FILTER,
 };
 
@@ -39,7 +48,11 @@ export const DEFAULT_SETTINGS: Settings = {
  * 共有され、受け取った側の変更が既定値に漏れる。既定値を返す経路は必ずここを通す。
  */
 function defaultSettings(): Settings {
-  return { recording: DEFAULT_SETTINGS.recording, urlFilter: normalizeUrlFilter(undefined) };
+  return {
+    recording: DEFAULT_SETTINGS.recording,
+    consoleRecording: DEFAULT_SETTINGS.consoleRecording,
+    urlFilter: normalizeUrlFilter(undefined),
+  };
 }
 
 /**
@@ -91,6 +104,12 @@ export function normalizeSettings(raw: unknown): Settings {
   return {
     recording:
       typeof source.recording === 'boolean' ? source.recording : DEFAULT_SETTINGS.recording,
+    // 拡張機能を更新した時点では保存済みの設定にこのキーが無い。既定値に寄せることで、
+    // 更新前から使っている利用者もコンソールの記録が有効な状態で始まる
+    consoleRecording:
+      typeof source.consoleRecording === 'boolean'
+        ? source.consoleRecording
+        : DEFAULT_SETTINGS.consoleRecording,
     urlFilter: normalizeUrlFilter(source.urlFilter),
   };
 }

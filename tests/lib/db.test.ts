@@ -1,6 +1,22 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { addLog, clearAll, getBodies, getBody, getStats, queryLogs } from '@/lib/db';
-import { sanitizeEntry, type SanitizedLogEntry } from '@/lib/sanitize';
+import {
+  addConsoleLog,
+  addConsoleLogs,
+  addLog,
+  clearAll,
+  getBodies,
+  getBody,
+  getStats,
+  queryConsoleLogs,
+  queryLogs,
+} from '@/lib/db';
+import {
+  sanitizeConsoleEntry,
+  sanitizeEntry,
+  type SanitizedConsoleEntry,
+  type SanitizedLogEntry,
+} from '@/lib/sanitize';
+import type { ConsoleLogEntry } from '@/lib/console-log';
 import type { NetworkLogEntry } from '@/lib/network-log';
 
 /**
@@ -289,14 +305,14 @@ describe('getBodies', () => {
 
 describe('getStats', () => {
   it('保存前は 0 件・0 バイト', async () => {
-    expect(await getStats()).toEqual({ count: 0, bodyBytes: 0 });
+    expect(await getStats()).toEqual({ count: 0, bodyBytes: 0, consoleCount: 0, consoleBytes: 0 });
   });
 
   it('保存したボディのサイズを合計する', async () => {
     await addLog(sanitized({ body: 'a', bodySize: 100, bodyStatus: 'stored' }));
     await addLog(sanitized({ body: 'b', bodySize: 250, bodyStatus: 'stored' }));
 
-    expect(await getStats()).toEqual({ count: 2, bodyBytes: 350 });
+    expect(await getStats()).toEqual({ count: 2, bodyBytes: 350, consoleCount: 0, consoleBytes: 0 });
   });
 
   it('ボディを保存していないエントリは件数だけ数える', async () => {
@@ -306,7 +322,7 @@ describe('getStats', () => {
     await addLog(sanitized({ body: null, bodySize: 300, bodyStatus: 'fetch_failed' }));
     await addLog(sanitized({ body: 'kept', bodySize: 40, bodyStatus: 'stored' }));
 
-    expect(await getStats()).toEqual({ count: 4, bodyBytes: 40 });
+    expect(await getStats()).toEqual({ count: 4, bodyBytes: 40, consoleCount: 0, consoleBytes: 0 });
   });
 
   it('全削除の後は 0 に戻る', async () => {
@@ -314,7 +330,7 @@ describe('getStats', () => {
 
     await clearAll();
 
-    expect(await getStats()).toEqual({ count: 0, bodyBytes: 0 });
+    expect(await getStats()).toEqual({ count: 0, bodyBytes: 0, consoleCount: 0, consoleBytes: 0 });
   });
 });
 
@@ -326,5 +342,168 @@ describe('clearAll', () => {
 
     expect(await queryLogs()).toEqual([]);
     expect(await getBody(id)).toBeNull();
+  });
+});
+
+/**
+ * コンソール側も保存前にサニタイズ層を通す。`addConsoleLog` が
+ * `SanitizedConsoleEntry` しか受け取らないため、通さずに組み立てた値は型エラーになる。
+ */
+function sanitizedConsole(overrides: Partial<ConsoleLogEntry> = {}): SanitizedConsoleEntry {
+  const entry: ConsoleLogEntry = {
+    ts: 1_700_000_000_000,
+    tabId: 7,
+    pageUrl: 'https://example.com/app',
+    level: 'log',
+    text: 'hello',
+    args: ['hello'],
+    source: 'https://example.com/a.js:1:2',
+    stack: null,
+    argsStatus: 'stored',
+    ...overrides,
+  };
+  return sanitizeConsoleEntry(entry);
+}
+
+describe('addConsoleLog', () => {
+  it('採番された ID を返す', async () => {
+    const first = await addConsoleLog(sanitizedConsole());
+    const second = await addConsoleLog(sanitizedConsole());
+
+    expect(typeof first).toBe('number');
+    expect(second).not.toBe(first);
+  });
+
+  it('保存した内容をそのまま読み戻せる', async () => {
+    await addConsoleLog(
+      sanitizedConsole({ level: 'error', text: '壊れた', args: ['壊れた', '{a: 1}'] }),
+    );
+
+    const [log] = await queryConsoleLogs();
+
+    expect(log?.level).toBe('error');
+    expect(log?.text).toBe('壊れた');
+    expect(log?.args).toEqual(['壊れた', '{a: 1}']);
+  });
+});
+
+describe('addConsoleLogs', () => {
+  it('まとめて保存して件数を返す', async () => {
+    const saved = await addConsoleLogs([
+      sanitizedConsole({ text: 'a' }),
+      sanitizedConsole({ text: 'b' }),
+    ]);
+
+    expect(saved).toBe(2);
+    expect(await queryConsoleLogs()).toHaveLength(2);
+  });
+
+  it('空配列では何も書かない', async () => {
+    expect(await addConsoleLogs([])).toBe(0);
+    expect(await queryConsoleLogs()).toHaveLength(0);
+  });
+});
+
+describe('queryConsoleLogs', () => {
+  it('新しい順に返す', async () => {
+    await addConsoleLog(sanitizedConsole({ ts: 100, text: '古い' }));
+    await addConsoleLog(sanitizedConsole({ ts: 300, text: '新しい' }));
+    await addConsoleLog(sanitizedConsole({ ts: 200, text: '中間' }));
+
+    expect((await queryConsoleLogs()).map((log) => log.text)).toEqual([
+      '新しい',
+      '中間',
+      '古い',
+    ]);
+  });
+
+  it('レベルで絞る', async () => {
+    await addConsoleLog(sanitizedConsole({ level: 'log' }));
+    await addConsoleLog(sanitizedConsole({ level: 'error' }));
+    await addConsoleLog(sanitizedConsole({ level: 'warn' }));
+
+    const results = await queryConsoleLogs({ levels: ['error', 'warn'] });
+
+    expect(results.map((log) => log.level).sort()).toEqual(['error', 'warn']);
+  });
+
+  it('レベルの指定が空配列なら絞らない', async () => {
+    // チェックを全部外した状態で 0 件になると、ログが消えたように見えるため
+    await addConsoleLog(sanitizedConsole({ level: 'log' }));
+    await addConsoleLog(sanitizedConsole({ level: 'error' }));
+
+    expect(await queryConsoleLogs({ levels: [] })).toHaveLength(2);
+  });
+
+  it('本文の部分一致で絞る（大文字小文字を無視）', async () => {
+    await addConsoleLog(sanitizedConsole({ text: 'Fetch failed' }));
+    await addConsoleLog(sanitizedConsole({ text: '正常' }));
+
+    expect(await queryConsoleLogs({ textIncludes: 'fetch' })).toHaveLength(1);
+  });
+
+  it('ページ URL の部分一致で絞る', async () => {
+    await addConsoleLog(sanitizedConsole({ pageUrl: 'https://a.example.com/x' }));
+    await addConsoleLog(sanitizedConsole({ pageUrl: 'https://b.example.com/y' }));
+
+    expect(await queryConsoleLogs({ pageUrlIncludes: 'a.example' })).toHaveLength(1);
+  });
+
+  it('タブと期間で絞る', async () => {
+    await addConsoleLog(sanitizedConsole({ ts: 100, tabId: 1 }));
+    await addConsoleLog(sanitizedConsole({ ts: 200, tabId: 2 }));
+    await addConsoleLog(sanitizedConsole({ ts: 300, tabId: 1 }));
+
+    expect(await queryConsoleLogs({ tabId: 1 })).toHaveLength(2);
+    expect(await queryConsoleLogs({ from: 200 })).toHaveLength(2);
+    expect(await queryConsoleLogs({ from: 150, to: 250 })).toHaveLength(1);
+  });
+
+  it('逆転した期間は 0 件（例外を投げない）', async () => {
+    await addConsoleLog(sanitizedConsole({ ts: 200 }));
+
+    expect(await queryConsoleLogs({ from: 300, to: 100 })).toEqual([]);
+  });
+
+  it('上限で打ち切る', async () => {
+    for (const ts of [100, 200, 300]) await addConsoleLog(sanitizedConsole({ ts }));
+
+    expect(await queryConsoleLogs({ limit: 2 })).toHaveLength(2);
+    expect(await queryConsoleLogs({ limit: 0 })).toEqual([]);
+  });
+});
+
+describe('getStats（コンソール）', () => {
+  it('件数と本文の文字数を数える', async () => {
+    await addConsoleLog(sanitizedConsole({ text: 'abc', args: ['de'] }));
+    await addConsoleLog(sanitizedConsole({ text: 'f', args: [] }));
+
+    const stats = await getStats();
+
+    expect(stats.consoleCount).toBe(2);
+    expect(stats.consoleBytes).toBe(6);
+  });
+
+  it('ネットワークログとは別に数える', async () => {
+    await addLog(sanitized({ body: 'x', bodySize: 10, bodyStatus: 'stored' }));
+    await addConsoleLog(sanitizedConsole({ text: 'y', args: [] }));
+
+    const stats = await getStats();
+
+    expect(stats.count).toBe(1);
+    expect(stats.bodyBytes).toBe(10);
+    expect(stats.consoleCount).toBe(1);
+  });
+});
+
+describe('clearAll', () => {
+  it('ネットワークとコンソールの両方を消す', async () => {
+    await addLog(sanitized());
+    await addConsoleLog(sanitizedConsole());
+
+    await clearAll();
+
+    expect(await queryLogs()).toEqual([]);
+    expect(await queryConsoleLogs()).toEqual([]);
   });
 });

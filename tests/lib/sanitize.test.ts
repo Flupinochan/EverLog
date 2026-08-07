@@ -3,10 +3,12 @@ import {
   DEFAULT_SANITIZE_OPTIONS,
   REDACTED,
   sanitizeBody,
+  sanitizeConsoleEntry,
   sanitizeEntry,
   sanitizeHeaders,
   sanitizeUrl,
 } from '@/lib/sanitize';
+import type { ConsoleLogEntry } from '@/lib/console-log';
 import type { NetworkLogEntry } from '@/lib/network-log';
 
 /** 実在の形に近い JWT（署名部分はダミー）。 */
@@ -364,5 +366,135 @@ describe('sanitizeEntry', () => {
     expect(result.droppedRequestHeaders).toContain('authorization');
     expect(result.droppedRequestHeaders).toContain('x-api-key');
     expect(JSON.parse(result.body as string)['expires_in']).toBe(3600);
+  });
+});
+
+function consoleEntry(overrides: Partial<ConsoleLogEntry> = {}): ConsoleLogEntry {
+  return {
+    ts: 1_700_000_000_000,
+    tabId: 7,
+    pageUrl: 'https://example.com/app',
+    level: 'log',
+    text: 'hello',
+    args: ['hello'],
+    source: 'https://example.com/a.js:1:2',
+    stack: null,
+    argsStatus: 'stored',
+    ...overrides,
+  };
+}
+
+describe('sanitizeConsoleEntry', () => {
+  it('本文のトークンを伏せる', () => {
+    const result = sanitizeConsoleEntry(
+      consoleEntry({
+        text: `token=${JWT} を送った`,
+        args: [`{"access_token": "${JWT}"}`],
+      }),
+    );
+
+    expect(result.text).not.toContain('eyJ');
+    expect(result.args[0]).not.toContain('eyJ');
+    expect(result.args[0]).toContain(REDACTED);
+  });
+
+  it('プレビュー形式のオブジェクト内のトークンを伏せる', () => {
+    // console の引数プレビューはキーが引用符で囲まれないため、JSON 用のパターンでは当たらない
+    const result = sanitizeConsoleEntry(
+      consoleEntry({ args: ['{access_token: "xyz-secret", user: "alice"}'] }),
+    );
+
+    expect(result.args[0]).toBe(`{access_token: "${REDACTED}", user: "alice"}`);
+  });
+
+  it('引数のうちトークンを含まないものはそのまま残す', () => {
+    const result = sanitizeConsoleEntry(consoleEntry({ args: ['{a: 1}', 'password=hunter2'] }));
+
+    expect(result.args[0]).toBe('{a: 1}');
+    expect(result.args[1]).toBe(`password=${REDACTED}`);
+  });
+
+  it('pageUrl のフラグメントに載ったトークンを伏せる', () => {
+    // OAuth の implicit flow 直後は console の記録でも同じ URL が載る
+    const result = sanitizeConsoleEntry(
+      consoleEntry({ pageUrl: 'https://example.com/cb#access_token=abc123&state=x' }),
+    );
+
+    expect(result.pageUrl).not.toContain('abc123');
+    expect(result.pageUrl).toContain('state=x');
+  });
+
+  it('スタックに載った URL のトークンを伏せる', () => {
+    const result = sanitizeConsoleEntry(
+      consoleEntry({ stack: 'Error: x\n    at https://example.com/a.js?api_key=secret-1:1:2' }),
+    );
+
+    expect(result.stack).not.toContain('secret-1');
+    expect(result.stack).toContain(REDACTED);
+  });
+
+  it('発生元はトークンを伏せつつ行・列番号を残す', () => {
+    // 伏せ字の対象になる「値」に末尾の :1:2 まで含まれるため、切り離して処理している
+    const result = sanitizeConsoleEntry(
+      consoleEntry({ source: 'https://example.com/a.js?api_key=secret-1:1:2' }),
+    );
+
+    expect(result.source).toBe(`https://example.com/a.js?api_key=${REDACTED}:1:2`);
+  });
+
+  it('クエリを持たない発生元はそのまま残す', () => {
+    const result = sanitizeConsoleEntry(consoleEntry({ source: 'https://example.com/a.js:12:34' }));
+
+    expect(result.source).toBe('https://example.com/a.js:12:34');
+  });
+
+  it('引数が無いエントリでも形を保つ', () => {
+    const result = sanitizeConsoleEntry(consoleEntry({ text: '', args: [], source: null }));
+
+    expect(result.text).toBe('');
+    expect(result.args).toEqual([]);
+    expect(result.source).toBeNull();
+    expect(result.stack).toBeNull();
+  });
+
+  it('調査に必要なメタデータは残す', () => {
+    const result = sanitizeConsoleEntry(consoleEntry({ level: 'error', argsStatus: 'truncated' }));
+
+    expect(result.level).toBe('error');
+    expect(result.argsStatus).toBe('truncated');
+    expect(result.ts).toBe(1_700_000_000_000);
+    expect(result.tabId).toBe(7);
+    expect(result.sanitized).toBe(true);
+  });
+});
+
+describe('sanitizeBody（引用符の無いキー）', () => {
+  it('JavaScript のオブジェクトリテラル形式でも伏せる', () => {
+    expect(sanitizeBody('const config = { apiKey: "k-1", region: "jp" };')).toBe(
+      `const config = { apiKey: "${REDACTED}", region: "jp" };`,
+    );
+  });
+
+  it('引用符の無い値も伏せる', () => {
+    expect(sanitizeBody('{token: abc123, count: 3}')).toBe(`{token: ${REDACTED}, count: 3}`);
+  });
+
+  it('URL のスキームやスタックの行番号を巻き込まない', () => {
+    const stack = 'at foo (https://example.com/a.js:12:34)';
+    expect(sanitizeBody(stack)).toBe(stack);
+  });
+
+  it('伏せ字の対象でないキーはそのまま残す', () => {
+    const body = '{userId: 42, name: "alice"}';
+    expect(sanitizeBody(body)).toBe(body);
+  });
+
+  it('引用符付きキーの JSON を二重に壊さない', () => {
+    const body = JSON.stringify({ password: 'hunter2', user: 'alice' });
+
+    const parsed = JSON.parse(sanitizeBody(body) as string) as Record<string, unknown>;
+
+    expect(parsed['password']).toBe(REDACTED);
+    expect(parsed['user']).toBe('alice');
   });
 });

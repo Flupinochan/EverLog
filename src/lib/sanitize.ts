@@ -8,6 +8,7 @@
  * 機微な API はキャプチャ時の URL フィルタで採取対象から外す二段構えとする。
  */
 
+import type { ConsoleLogEntry } from './console-log';
 import type { NetworkLogEntry } from './network-log';
 
 export const REDACTED = '[REDACTED]';
@@ -18,6 +19,17 @@ export interface SanitizedLogEntry extends NetworkLogEntry {
   droppedRequestHeaders: string[];
   /** 許可リストに載らず破棄したレスポンスヘッダー名（値は保存しない） */
   droppedResponseHeaders: string[];
+}
+
+/**
+ * サニタイズ済みのコンソールエントリ。
+ *
+ * ネットワーク側と違い、落としたヘッダー名のような追加フィールドは持たない。
+ * それでも別名の型にするのは、`addConsoleLog()` が受け取る型をこれに限ることで、
+ * 素通しで保存する経路を型で塞ぐため（`SanitizedLogEntry` と同じ理由）。
+ */
+export interface SanitizedConsoleEntry extends ConsoleLogEntry {
+  readonly sanitized: true;
 }
 
 export interface SanitizeOptions {
@@ -237,6 +249,18 @@ function redactQueryLikeString(text: string, redactKeys: Set<string>): string {
 }
 
 /**
+ * 引用符の無いキーの `key: value`。
+ *
+ * コンソールの引数プレビュー（`{access_token: "..."}`）と、JavaScript のソースが
+ * レスポンスとして返る場合（`{ apiKey: "..." }`）を拾う。JSON のようにキーが
+ * 引用符で囲まれていないため、上の JSON 用のパターンでは当たらない。
+ *
+ * 直前の 1 文字を見るのは、URL のスキーム（`https://`）やスタックの行番号
+ * （`a.js:12:34`）を巻き込まないため。`{` `,` `[` か空白の後ろに限る。
+ */
+const UNQUOTED_KEY_PATTERN = /([{,[\s]|^)([\w.$-]+)(\s*:\s*)("(?:[^"\\]|\\.)*"|[^\s,;{}[\]]+)/g;
+
+/**
  * ボディからトークンを除去する。
  *
  * JSON として壊さないよう、キーと引用符を残して値だけを置換する。
@@ -255,16 +279,27 @@ export function sanitizeBody(
       isRedactKey(key, redactKeys) ? `${prefix}"${REDACTED}"` : match,
   );
 
-  // 2. フォームエンコード（access_token=...）と、文字列中に埋め込まれた URL のクエリ
+  // 2. 引用符の無いキー（access_token: "..."）
+  result = result.replace(
+    UNQUOTED_KEY_PATTERN,
+    (match, prefix: string, key: string, separator: string, value: string) => {
+      if (!isRedactKey(key, redactKeys)) return match;
+      // 値が引用符付きなら引用符ごと残す。囲みを外すと構造が変わって読めなくなる
+      const replaced = value.startsWith('"') ? `"${REDACTED}"` : REDACTED;
+      return `${prefix}${key}${separator}${replaced}`;
+    },
+  );
+
+  // 3. フォームエンコード（access_token=...）と、文字列中に埋め込まれた URL のクエリ
   result = redactQueryLikeString(result, redactKeys);
 
-  // 3. Bearer / Basic（スキームは残す）
+  // 4. Bearer / Basic（スキームは残す）
   // スキームは正規表現の捕捉グループから取る。マッチ文字列を ' ' で切ると、
   // 区切りがタブや改行のとき indexOf が -1 を返してトークン末尾 1 文字だけが
   // 落ちた値（= ほぼ生のトークン）が保存されてしまう。
   result = result.replace(AUTH_SCHEME_PATTERN, (_match, scheme: string) => `${scheme} ${REDACTED}`);
 
-  // 4. 上記に当てはまらない裸の JWT
+  // 5. 上記に当てはまらない裸の JWT
   result = result.replace(JWT_PATTERN, REDACTED);
 
   return result;
@@ -298,6 +333,49 @@ export function sanitizeHeaders(
   }
 
   return { headers: sanitized, dropped: dropped.sort() };
+}
+
+/** `https://example.com/a.js:12:34` の末尾の行・列番号。 */
+const SOURCE_LOCATION_PATTERN = /^(.*?)(:\d+:\d+)$/;
+
+/**
+ * 発生元（`url:line:col`）をサニタイズする。
+ *
+ * 行・列番号を切り離してから URL を処理する。`?api_key=secret` のようなクエリを
+ * 持つ URL では、伏せ字の対象になる「値」に末尾の `:12:34` まで含まれてしまい、
+ * そのまま通すと発生位置が消える。トークンは伏せたうえで位置は残す。
+ */
+function sanitizeSourceLocation(source: string, options: SanitizeOptions): string {
+  const matched = SOURCE_LOCATION_PATTERN.exec(source);
+  if (matched === null) return sanitizeUrl(source, options);
+  return `${sanitizeUrl(matched[1] ?? '', options)}${matched[2] ?? ''}`;
+}
+
+/**
+ * コンソールエントリをサニタイズする。保存層はこの関数の戻り値だけを受け取る。
+ *
+ * ヘッダーが無いため許可リストは使わず、文字列の中身だけを見る。console には
+ * `console.log('token', token)` のようにトークンがそのまま出ることが珍しくないため、
+ * 本文（`text` と `args`）は必ず `sanitizeBody()` に通す。
+ *
+ * `stack` も本文として扱う。スタックの各行には URL が載り、その URL のクエリに
+ * トークンが含まれうるため。ここでは行・列番号まで伏せ字に飲まれることがあるが、
+ * 発生位置は `source` に残るので、スタック側は多めに伏せるほうへ倒す。
+ */
+export function sanitizeConsoleEntry(
+  entry: ConsoleLogEntry,
+  options: SanitizeOptions = DEFAULT_SANITIZE_OPTIONS,
+): SanitizedConsoleEntry {
+  return {
+    ...entry,
+    pageUrl: sanitizeUrl(entry.pageUrl, options),
+    // 空文字は `sanitizeBody()` がそのまま返すため、引数の無いログでも形が変わらない
+    text: sanitizeBody(entry.text, options) ?? '',
+    args: entry.args.map((arg) => sanitizeBody(arg, options) ?? ''),
+    source: entry.source === null ? null : sanitizeSourceLocation(entry.source, options),
+    stack: sanitizeBody(entry.stack, options),
+    sanitized: true,
+  };
 }
 
 /**
