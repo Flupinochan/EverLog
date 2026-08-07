@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { addLog, clearAll, getBody, getStats, queryLogs } from '@/lib/db';
+import { addLog, clearAll, getBodies, getBody, getStats, queryLogs } from '@/lib/db';
 import { sanitizeEntry, type SanitizedLogEntry } from '@/lib/sanitize';
 import type { NetworkLogEntry } from '@/lib/network-log';
 
@@ -242,6 +242,48 @@ describe('getBody', () => {
 
     expect(await getBody(first)).toBe('first');
     expect(await getBody(second)).toBe('second');
+  });
+});
+
+describe('getBodies', () => {
+  it('複数のボディを 1 度にまとめて返す', async () => {
+    const first = await addLog(sanitized({ body: 'first', bodyStatus: 'stored' }));
+    const second = await addLog(sanitized({ body: 'second', bodyStatus: 'stored' }));
+
+    const bodies = await getBodies([first, second]);
+
+    expect(bodies.get(first)).toBe('first');
+    expect(bodies.get(second)).toBe('second');
+    expect(bodies.size).toBe(2);
+  });
+
+  it('保存されていない ID は載せない', async () => {
+    const stored = await addLog(sanitized({ body: 'kept', bodyStatus: 'stored' }));
+    const withoutBody = await addLog(sanitized({ body: null, bodyStatus: 'mime_excluded' }));
+
+    const bodies = await getBodies([stored, withoutBody, 999_999]);
+
+    expect(bodies.size).toBe(1);
+    expect(bodies.has(withoutBody)).toBe(false);
+    expect(bodies.has(999_999)).toBe(false);
+  });
+
+  it('空配列では空の Map を返す', async () => {
+    expect((await getBodies([])).size).toBe(0);
+  });
+
+  it('getBody を件数分呼ぶのと同じ結果になる', async () => {
+    const ids = [
+      await addLog(sanitized({ body: 'a', bodyStatus: 'stored' })),
+      await addLog(sanitized({ body: null, bodyStatus: 'fetch_failed' })),
+      await addLog(sanitized({ body: 'c', bodyStatus: 'stored' })),
+    ];
+
+    const bulk = await getBodies(ids);
+
+    for (const id of ids) {
+      expect(bulk.get(id) ?? null).toBe(await getBody(id));
+    }
   });
 });
 

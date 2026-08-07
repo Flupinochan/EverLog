@@ -9,10 +9,17 @@ import { useCallback, useMemo, useState } from 'react';
 import { browser } from 'wxt/browser';
 import type { StoredLog } from '@/lib/db';
 import { indexedDbLogSource, type LogSource } from '@/lib/log-source';
-import { EMPTY_FILTER_FORM, PAGE_SIZE, buildFilter, type FilterForm } from '@/lib/panel-view';
+import {
+  EMPTY_FILTER_FORM,
+  PAGE_SIZE,
+  buildFilter,
+  describeExportSize,
+  type FilterForm,
+} from '@/lib/panel-view';
 import { FilterBar } from './components/FilterBar';
 import { LogDetail } from './components/LogDetail';
 import { LogTable } from './components/LogTable';
+import { useHarExport } from './hooks/useHarExport';
 import { useLogBody } from './hooks/useLogBody';
 import { useLogQuery } from './hooks/useLogQuery';
 
@@ -25,6 +32,15 @@ function inspectedTabId(): number | undefined {
     return browser.devtools?.inspectedWindow?.tabId;
   } catch {
     return undefined;
+  }
+}
+
+/** 出力する HAR の `creator.version` に載せる値。読めない場合も出力自体は止めない。 */
+function extensionVersion(): string {
+  try {
+    return browser.runtime.getManifest().version;
+  } catch {
+    return '0.0.0';
   }
 }
 
@@ -53,6 +69,10 @@ export function App({ source = indexedDbLogSource, tabId }: Props = {}) {
   );
   const { body, loading: bodyLoading, error: bodyError } = useLogBody(source, selected);
 
+  const version = useMemo(() => extensionVersion(), []);
+  const exportState = useHarExport(source, version);
+  const { start: startExport, cancel: cancelExport } = exportState;
+
   const change = useCallback((patch: Partial<FilterForm>) => {
     setForm((prev) => ({ ...prev, ...patch }));
   }, []);
@@ -60,13 +80,28 @@ export function App({ source = indexedDbLogSource, tabId }: Props = {}) {
   const apply = useCallback(() => {
     setApplied(form);
     setLimit(PAGE_SIZE);
-  }, [form]);
+    // 条件が変われば確認待ちの出力は的外れになる。同意しても古い条件の結果が出てしまう
+    cancelExport();
+  }, [form, cancelExport]);
 
   const reset = useCallback(() => {
     setForm(EMPTY_FILTER_FORM);
     setApplied(EMPTY_FILTER_FORM);
     setLimit(PAGE_SIZE);
-  }, []);
+    cancelExport();
+  }, [cancelExport]);
+
+  /**
+   * 入力欄の内容をそのまま出力条件にする。
+   *
+   * 出力ボタンは `type="button"` でフォームを送信しないため、`適用` を押さずに押される。
+   * `applied` を見ると「絞り込んだつもりの条件」ではなく 1 つ前の条件で出てしまうので、
+   * 押された時点の `form` から条件を作り、同時に一覧の表示条件も揃える。
+   */
+  const exportHar = useCallback(() => {
+    apply();
+    startExport(buildFilter(form, currentTabId));
+  }, [apply, startExport, form, currentTabId]);
 
   return (
     <div className="flex h-screen flex-col bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">
@@ -79,12 +114,52 @@ export function App({ source = indexedDbLogSource, tabId }: Props = {}) {
         autoRefresh={autoRefresh}
         onAutoRefreshChange={setAutoRefresh}
         onReload={reload}
+        onExport={exportHar}
+        exporting={exportState.exporting}
       />
 
       {error !== null && (
         <p className="border-b border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
           読み込みに失敗しました: {error}
         </p>
+      )}
+
+      {/* 規模が大きいときだけ出る確認。window.confirm() は DevTools パネル内で
+          挙動が安定しないため、popup の全削除と同じくインラインで確認する */}
+      {exportState.pending !== null && (
+        <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+          <span>
+            {describeExportSize(exportState.pending.count, exportState.pending.bytes)}{' '}
+            を出力します。よろしいですか？
+          </span>
+          <button
+            type="button"
+            className="rounded border border-amber-400 px-2 py-0.5 hover:bg-amber-100 dark:border-amber-700 dark:hover:bg-amber-900"
+            onClick={exportState.confirm}
+          >
+            出力する
+          </button>
+          <button
+            type="button"
+            className="rounded border border-amber-400 px-2 py-0.5 hover:bg-amber-100 dark:border-amber-700 dark:hover:bg-amber-900"
+            onClick={exportState.cancel}
+          >
+            やめる
+          </button>
+        </div>
+      )}
+
+      {exportState.error !== null && (
+        <div className="flex items-center gap-2 border-b border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
+          <span>出力できませんでした: {exportState.error}</span>
+          <button
+            type="button"
+            className="rounded border border-red-300 px-2 py-0.5 hover:bg-red-100 dark:border-red-800 dark:hover:bg-red-900"
+            onClick={exportState.dismissError}
+          >
+            閉じる
+          </button>
+        </div>
       )}
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">

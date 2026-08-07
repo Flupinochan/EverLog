@@ -289,6 +289,33 @@ export async function getBody(id: number): Promise<string | null> {
   return record?.body ?? null;
 }
 
+/**
+ * 複数のログ ID に対応するボディをまとめて取り出す。保存されていない ID は載せない。
+ *
+ * `getBody()` を件数分呼ぶのと結果は同じだが、こちらは 1 つのトランザクションで済ませる。
+ * HAR 出力はフィルタ該当の全件が対象で数千件になりうるため、その回数だけトランザクションを
+ * 開くのは避ける。1 件ずつ読む詳細表示は引き続き `getBody()` を使う。
+ */
+export async function getBodies(ids: readonly number[]): Promise<Map<number, string>> {
+  const bodies = new Map<number, string>();
+  if (ids.length === 0) return bodies;
+
+  const db = await openDatabase();
+  const tx = db.transaction(BODY_STORE, 'readonly');
+  const store = tx.objectStore(BODY_STORE);
+
+  // すべての取得要求を同じトランザクションに投げてから待つ。1 件ずつ await すると
+  // その間にトランザクションが自動で閉じる（要求が途切れた時点で完了扱いになるため）。
+  const records = await Promise.all(
+    ids.map((id) => request(store.get(id)) as Promise<BodyRecord | undefined>),
+  );
+
+  for (const record of records) {
+    if (record !== undefined) bodies.set(record.logId, record.body);
+  }
+  return bodies;
+}
+
 /** 保存済みのログをすべて削除する。 */
 export async function clearAll(): Promise<void> {
   const db = await openDatabase();

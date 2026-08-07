@@ -16,6 +16,9 @@ interface Props {
   autoRefresh: boolean;
   onAutoRefreshChange: (enabled: boolean) => void;
   onReload: () => void;
+  /** 現在のフィルタに一致する全件を HAR で出力する */
+  onExport: () => void;
+  exporting: boolean;
 }
 
 const CONTROL =
@@ -35,6 +38,8 @@ export function FilterBar({
   autoRefresh,
   onAutoRefreshChange,
   onReload,
+  onExport,
+  exporting,
 }: Props) {
   return (
     <form
@@ -102,6 +107,16 @@ export function FilterBar({
       </button>
       <button type="button" className={BUTTON} onClick={onReset}>
         クリア
+      </button>
+      <button
+        type="button"
+        className={`${BUTTON} disabled:opacity-50`}
+        onClick={onExport}
+        disabled={exporting}
+        // 表示中の件数ではなく条件に一致する全件が出るため、ここで明示しておく
+        title="現在のフィルタに一致する全件を HAR ファイルとして出力します"
+      >
+        {exporting ? '出力中…' : 'HAR 出力'}
       </button>
 
       <span className="ml-auto flex items-center gap-1.5">

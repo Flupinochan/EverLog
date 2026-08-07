@@ -10,6 +10,7 @@
 
 import {
   clearAll,
+  getBodies,
   getBody,
   getStats,
   queryLogs,
@@ -23,6 +24,8 @@ export interface LogSource {
   queryLogs(filter: LogFilter): Promise<StoredLog[]>;
   /** ログ ID に対応するボディを返す。保存されていなければ null */
   getBody(id: number): Promise<string | null>;
+  /** 複数のボディをまとめて返す。保存されていない ID は載らない（HAR 出力用） */
+  getBodies(ids: readonly number[]): Promise<Map<number, string>>;
   /** 保存件数とボディサイズの合計を返す（popup の保存状況表示用） */
   getStats(): Promise<StorageStats>;
 }
@@ -31,6 +34,7 @@ export interface LogSource {
 export const indexedDbLogSource: LogSource = {
   queryLogs,
   getBody,
+  getBodies,
   getStats,
 };
 

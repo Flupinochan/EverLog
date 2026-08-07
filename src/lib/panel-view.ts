@@ -151,6 +151,28 @@ export function formatBytes(bytes: number): string {
   return `${rounded} ${BYTE_UNITS[unit]}`;
 }
 
+/**
+ * HAR 出力の前に確認を挟む概算サイズの閾値。
+ *
+ * 出力はフィルタ該当の全件が対象なので、条件を絞らずに押すと数百 MB になりうる。
+ * 毎回確認を出すと邪魔なので、意図しない規模のときだけ止める。
+ */
+export const EXPORT_CONFIRM_BYTES = 50 * 1024 * 1024;
+
+/**
+ * 出力を諦める概算サイズの上限。
+ *
+ * 出力は同じ内容を「ログ配列 → ボディの Map → HAR オブジェクト → JSON 文字列 → Blob」と
+ * 何重にもメモリへ載せる。この規模を超えると `JSON.stringify()` が文字列長の上限で落ちるか、
+ * パネルごとメモリ不足で落ちる。長く待たせた末に落ちるより、先に条件を絞るよう促す。
+ */
+export const EXPORT_MAX_BYTES = 500 * 1024 * 1024;
+
+/** 出力対象の規模を表す文言。`1,234 件 / 約 52.3 MB`。 */
+export function describeExportSize(count: number, bytes: number): string {
+  return `${count.toLocaleString('en-US')} 件 / 約 ${formatBytes(bytes)}`;
+}
+
 /** JSON として整形表示してよい MIME タイプか（`application/problem+json` 等も含む）。 */
 export function isJsonLike(mimeType: string): boolean {
   const type = mimeType.trim().toLowerCase();
