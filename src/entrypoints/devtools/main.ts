@@ -8,11 +8,24 @@ import { browser } from 'wxt/browser';
 import { startNetworkCapture } from '@/lib/capture';
 import { addLog, clearAll, getBody, getStats, queryLogs } from '@/lib/db';
 import { sanitizeEntry } from '@/lib/sanitize';
-import { loadSettings, watchSettings } from '@/lib/settings';
-import type { NetworkLogEntry } from '@/lib/network-log';
+import { loadSettings, watchSettings, type Settings } from '@/lib/settings';
+import {
+  DEFAULT_URL_FILTER,
+  shouldCaptureUrl,
+  type NetworkLogEntry,
+  type UrlFilter,
+} from '@/lib/network-log';
 
-/** 記録が有効か。切り替えは `applyRecording()`。 */
+/** 記録が有効か。切り替えは `applySettings()`。 */
 let recording = false;
+
+/**
+ * キャプチャ対象を絞る URL フィルタ。切り替えは `applySettings()`。
+ *
+ * `recording` と同じくモジュールスコープに置き、キャプチャ側へはこれを読む
+ * クロージャを渡す。値で渡すと変更のたびに購読を張り直すことになる。
+ */
+let urlFilter: UrlFilter = DEFAULT_URL_FILTER;
 
 /**
  * キャプチャしたエントリをサニタイズして保存する。
@@ -28,6 +41,10 @@ async function saveEntry(entry: NetworkLogEntry): Promise<void> {
   // 記録を OFF にした時点で `getContent()` の応答を待っていた分は、ここで捨てる。
   // 購読の解除だけでは、解除前に始まった 1 件が後から届いて保存されてしまう。
   if (!recording) return;
+
+  // 同じ理由で URL フィルタも取り直す。ボディの取得を待っている間にパターンが
+  // 追加された場合、キャプチャ層の判定を通り抜けた 1 件が残ってしまう。
+  if (!shouldCaptureUrl(entry.url, urlFilter)) return;
 
   const sanitized = sanitizeEntry(entry);
   try {
@@ -81,6 +98,8 @@ function startCapture(): void {
     browser.devtools.network,
     () => ({ tabId: browser.devtools.inspectedWindow.tabId, pageUrl }),
     (entry) => void saveEntry(entry),
+    undefined,
+    (url) => shouldCaptureUrl(url, urlFilter),
   );
 }
 
@@ -90,16 +109,20 @@ function stopCapturing(): void {
 }
 
 /**
- * 記録状態を反映する。
+ * 設定を反映する。設定が生きた値になる場所をここ 1 箇所に保つ。
  *
- * OFF のときはリスナー自体を外す。ハンドラ側で捨てる作りにすると、記録していない
- * 間も `getContent()` を呼んでボディを取りに行ってしまうため。
+ * 記録が OFF のときはリスナー自体を外す。ハンドラ側で捨てる作りにすると、
+ * 記録していない間も `getContent()` を呼んでボディを取りに行ってしまうため。
+ *
+ * URL フィルタは変数を差し替えるだけでよい。キャプチャ側にはこれを読む
+ * クロージャを渡しているので、購読を張り直さずに次のリクエストから効く。
  */
-function applyRecording(next: boolean): void {
+function applySettings(settings: Settings): void {
   settingsApplied = true;
-  recording = next;
+  recording = settings.recording;
+  urlFilter = settings.urlFilter;
 
-  if (next) startCapture();
+  if (settings.recording) startCapture();
   else stopCapturing();
 }
 
@@ -110,17 +133,23 @@ function applyRecording(next: boolean): void {
  */
 const settingsReady = loadSettings(browser.storage.local).then((settings) => {
   if (settingsApplied) return;
-  applyRecording(settings.recording);
+  applySettings(settings);
 });
 
 // 設定を読み終える前から購読は張っておく。ここを待つと、ページの読み込み中に
 // DevTools を開いた場合などに最初の数件を取りこぼす。記録が OFF だった場合は
 // 上の読み込みが購読を外し、その間に拾った分は saveEntry() が捨てる。
+//
+// この間だけは urlFilter が既定値（フィルタ無し）なので、除外対象の URL でも
+// getContent() まで進む。保存は saveEntry() の再判定が止めるため記録には残らないが、
+// 本来触らないはずのボディを一瞬だけメモリに載せることにはなる。設定の読み込みは
+// storage の 1 往復で、それより早く終わるリクエストを捨てるほうが損失が大きいと
+// 判断してこの順にしている。
 startCapture();
 
 // popup で切り替えたときに、DevTools を開き直さずに反映されるようにする
 watchSettings(browser.storage, (settings) => {
-  applyRecording(settings.recording);
+  applySettings(settings);
 });
 
 // 閲覧 UI を DevTools のパネルとして登録する。パネルのページは

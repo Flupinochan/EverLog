@@ -11,19 +11,36 @@
  * Service Worker の生存期間に依存しない。
  */
 
+import { DEFAULT_URL_FILTER, normalizeUrlFilter, type UrlFilter } from './network-log';
+
 /** 保存する設定の全体。 */
 export interface Settings {
   /** 記録の ON/OFF */
   recording: boolean;
+  /** キャプチャ対象を URL で絞る設定 */
+  urlFilter: UrlFilter;
 }
 
 /**
- * 既定値。記録は ON で始める。
+ * 既定値。記録は ON、URL フィルタは無しで始める。
  *
  * 「気づいたときには既にログが流れている」場面を救うのがこの拡張機能の目的であり、
  * 既定で止まっていると目的を果たせないため。
  */
-export const DEFAULT_SETTINGS: Settings = { recording: true };
+export const DEFAULT_SETTINGS: Settings = {
+  recording: true,
+  urlFilter: DEFAULT_URL_FILTER,
+};
+
+/**
+ * 既定値の新しいインスタンス。
+ *
+ * `{ ...DEFAULT_SETTINGS }` では `urlFilter` とその配列が `DEFAULT_SETTINGS` と
+ * 共有され、受け取った側の変更が既定値に漏れる。既定値を返す経路は必ずここを通す。
+ */
+function defaultSettings(): Settings {
+  return { recording: DEFAULT_SETTINGS.recording, urlFilter: normalizeUrlFilter(undefined) };
+}
 
 /**
  * `chrome.storage.local` 内のキー。設定は項目ごとに分けず 1 つのオブジェクトで持つ。
@@ -68,12 +85,13 @@ export interface SettingsChangeSource {
  * 設定を読む経路は必ずここを通すため、呼び出し側は欠けたフィールドを気にしなくてよい。
  */
 export function normalizeSettings(raw: unknown): Settings {
-  if (typeof raw !== 'object' || raw === null) return { ...DEFAULT_SETTINGS };
+  if (typeof raw !== 'object' || raw === null) return defaultSettings();
 
   const source = raw as Record<string, unknown>;
   return {
     recording:
       typeof source.recording === 'boolean' ? source.recording : DEFAULT_SETTINGS.recording,
+    urlFilter: normalizeUrlFilter(source.urlFilter),
   };
 }
 
@@ -89,22 +107,36 @@ export async function loadSettings(area: SettingsStorageArea): Promise<Settings>
     return normalizeSettings(stored[SETTINGS_KEY]);
   } catch (error) {
     console.error('[EverLog] failed to load settings', error);
-    return { ...DEFAULT_SETTINGS };
+    return defaultSettings();
   }
 }
+
+/**
+ * 書き換える内容。関数で渡すと、保存直前に読み直した値を見て patch を組み立てられる。
+ */
+export type SettingsPatch = Partial<Settings> | ((current: Settings) => Partial<Settings>);
 
 /**
  * 設定の一部を書き換え、確定した全体を返す。
  *
  * 書き込みの失敗は握りつぶさない。UI 側で「切り替えたつもりが切り替わっていない」
  * 状態になるのを避けるため、呼び出し側に伝える。
+ *
+ * patch は最上位のフィールド単位で適用する。`urlFilter` のようなネストした値は
+ * マージではなく丸ごと置換になるため、呼び出し側は常に完成した値を渡すこと。
+ *
+ * その「完成した値」を組み立てるのに他のフィールドが要る場合（`urlFilter.patterns`
+ * だけ差し替えたいが `mode` は今の値のままにしたい、など）は patch を関数で渡す。
+ * UI が持っている値は保存の往復を経ていない古いものでありうるため、それを混ぜると
+ * 直前の変更を黙って巻き戻してしまう。
  */
 export async function saveSettings(
   area: SettingsStorageArea,
-  patch: Partial<Settings>,
+  patch: SettingsPatch,
 ): Promise<Settings> {
   const current = await loadSettings(area);
-  const next = normalizeSettings({ ...current, ...patch });
+  const resolved = typeof patch === 'function' ? patch(current) : patch;
+  const next = normalizeSettings({ ...current, ...resolved });
   await area.set({ [SETTINGS_KEY]: next });
   return next;
 }

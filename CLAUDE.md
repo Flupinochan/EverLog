@@ -18,23 +18,23 @@ src/                     # 本番用コード
 │   ├── devtools/        # キャプチャ → サニタイズ → 保存 の配線、パネル登録
 │   ├── background.ts    # Service Worker
 │   ├── panel/           # 閲覧 UI（一覧・フィルタ・詳細表示・HAR 出力）
-│   └── popup/            # 記録トグル・保存状況・全削除
+│   └── popup/            # 記録トグル・URL フィルタ・保存状況・全削除
 └── lib/
-    ├── network-log.ts   # データモデル + HAR → エントリ変換
+    ├── network-log.ts   # データモデル + HAR → エントリ変換 + URL/MIME パターン判定
     ├── capture.ts        # onRequestFinished 購読・getContent
     ├── sanitize.ts       # ヘッダー許可リスト・トークン除去
     ├── db.ts              # IndexedDB（保存・取得・集計・全削除）
     ├── settings.ts        # 設定の型・既定値・chrome.storage の読み書きと購読
     ├── log-source.ts      # 閲覧 UI から見た保存層の入口
     ├── panel-view.ts      # 閲覧 UI の表示ロジック（純粋関数）
+    ├── popup-view.ts      # popup の表示ロジック（純粋関数）
     └── har.ts             # エントリ → HAR 1.2 変換（純粋関数）
 tests/                   # テストコード
 ```
 
 ## 未実装
 
-- キャプチャ時の URL 除外フィルタ (機微な API を採取対象から外す。閲覧側の URL フィルタは実装済み)
-- 設定編集 UI (記録の ON/OFF 以外。MIME パターンやボディサイズ上限は変更できない)
+- 設定編集 UI (記録の ON/OFF と URL フィルタ以外。MIME パターンやボディサイズ上限は変更できない)
 - 保持期間や容量上限による自動削除
 
 ## 依存関係の追加

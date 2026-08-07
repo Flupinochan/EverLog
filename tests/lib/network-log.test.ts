@@ -6,7 +6,11 @@ import {
   byteLength,
   headersToRecord,
   matchesMimePatterns,
+  matchesUrlPatterns,
+  MAX_URL_PATTERNS,
+  normalizeUrlFilter,
   parseMimeType,
+  shouldCaptureUrl,
   type CaptureContext,
   type HarLikeEntry,
   type NetworkLogEntry,
@@ -274,5 +278,142 @@ describe('attachBody', () => {
     expect(result.url).toBe(entry.url);
     expect(result.ts).toBe(entry.ts);
     expect(result.tabId).toBe(entry.tabId);
+  });
+});
+
+describe('matchesUrlPatterns', () => {
+  const url = 'https://api.example.com/v1/oauth/token?client_id=abc';
+
+  it('ワイルドカードを含まないパターンは URL の一部に一致すれば真を返す', () => {
+    expect(matchesUrlPatterns(url, ['/oauth/'])).toBe(true);
+    expect(matchesUrlPatterns(url, ['api.example.com'])).toBe(true);
+  });
+
+  it('一致しないパターンでは偽を返す', () => {
+    expect(matchesUrlPatterns(url, ['/graphql'])).toBe(false);
+  });
+
+  it('* は / を跨いで任意の文字列に一致する', () => {
+    expect(matchesUrlPatterns(url, ['https://api.example.com/*'])).toBe(true);
+    expect(matchesUrlPatterns(url, ['example.com*token'])).toBe(true);
+  });
+
+  it('複数の * を含むパターンを左から順に照合する', () => {
+    expect(matchesUrlPatterns(url, ['*v1*oauth*client_id*'])).toBe(true);
+    // 順序が逆のものは一致しない
+    expect(matchesUrlPatterns(url, ['*client_id*oauth*'])).toBe(false);
+  });
+
+  it('* だけのパターンはすべての URL に一致する', () => {
+    expect(matchesUrlPatterns(url, ['*'])).toBe(true);
+    expect(matchesUrlPatterns('', ['*'])).toBe(true);
+  });
+
+  it('大文字小文字は区別しない', () => {
+    expect(matchesUrlPatterns(url, ['API.Example.COM'])).toBe(true);
+    expect(matchesUrlPatterns('HTTPS://EXAMPLE.COM/A', ['example.com/a'])).toBe(true);
+  });
+
+  it('. や ? は正規表現ではなく文字そのものとして扱う', () => {
+    expect(matchesUrlPatterns(url, ['api.example.com'])).toBe(true);
+    expect(matchesUrlPatterns('https://apiXexample.com/', ['api.example.com'])).toBe(false);
+    expect(matchesUrlPatterns(url, ['token?client_id='])).toBe(true);
+  });
+
+  it('空文字や空白だけのパターンは無視する', () => {
+    expect(matchesUrlPatterns(url, [''])).toBe(false);
+    expect(matchesUrlPatterns(url, ['   '])).toBe(false);
+    expect(matchesUrlPatterns(url, ['', '/oauth/'])).toBe(true);
+  });
+
+  it('パターンの前後の空白は無視する', () => {
+    expect(matchesUrlPatterns(url, ['  /oauth/  '])).toBe(true);
+  });
+
+  it('パターンが 1 つも無ければ一致しない', () => {
+    expect(matchesUrlPatterns(url, [])).toBe(false);
+  });
+});
+
+describe('shouldCaptureUrl', () => {
+  const url = 'https://api.example.com/v1/oauth/token';
+
+  it('deny では一致した URL を記録しない', () => {
+    expect(shouldCaptureUrl(url, { mode: 'deny', patterns: ['*/oauth/*'] })).toBe(false);
+  });
+
+  it('deny では一致しない URL を記録する', () => {
+    expect(shouldCaptureUrl(url, { mode: 'deny', patterns: ['*/graphql'] })).toBe(true);
+  });
+
+  it('allow では一致した URL だけ記録する', () => {
+    expect(shouldCaptureUrl(url, { mode: 'allow', patterns: ['api.example.com'] })).toBe(true);
+    expect(shouldCaptureUrl(url, { mode: 'allow', patterns: ['other.example.com'] })).toBe(false);
+  });
+
+  it('パターンが空なら allow でも deny でも記録する', () => {
+    expect(shouldCaptureUrl(url, { mode: 'allow', patterns: [] })).toBe(true);
+    expect(shouldCaptureUrl(url, { mode: 'deny', patterns: [] })).toBe(true);
+  });
+
+  it('空白だけのパターンしか無ければ記録する', () => {
+    expect(shouldCaptureUrl(url, { mode: 'allow', patterns: ['', '  '] })).toBe(true);
+    expect(shouldCaptureUrl(url, { mode: 'deny', patterns: ['', '  '] })).toBe(true);
+  });
+});
+
+describe('normalizeUrlFilter', () => {
+  it('未設定なら既定値を返す', () => {
+    expect(normalizeUrlFilter(undefined)).toEqual({ mode: 'deny', patterns: [] });
+    expect(normalizeUrlFilter(null)).toEqual({ mode: 'deny', patterns: [] });
+    expect(normalizeUrlFilter('deny')).toEqual({ mode: 'deny', patterns: [] });
+  });
+
+  it('知らない mode は既定値に寄せる', () => {
+    expect(normalizeUrlFilter({ mode: 'block', patterns: [] }).mode).toBe('deny');
+    expect(normalizeUrlFilter({ mode: 'allow', patterns: [] }).mode).toBe('allow');
+  });
+
+  it('patterns が配列でなければ空にする', () => {
+    expect(normalizeUrlFilter({ mode: 'allow', patterns: '*/oauth/*' }).patterns).toEqual([]);
+  });
+
+  it('文字列でない要素だけを落として残りは保持する', () => {
+    expect(normalizeUrlFilter({ mode: 'deny', patterns: ['/a', 1, null, '/b'] }).patterns).toEqual([
+      '/a',
+      '/b',
+    ]);
+  });
+
+  it('前後の空白を落とし、空文字のパターンは捨てる', () => {
+    expect(normalizeUrlFilter({ mode: 'deny', patterns: ['  /a  ', '', '   '] }).patterns).toEqual([
+      '/a',
+    ]);
+  });
+
+  it('重複したパターンは 1 つにまとめる', () => {
+    expect(normalizeUrlFilter({ mode: 'deny', patterns: ['/a', ' /a ', '/b'] }).patterns).toEqual([
+      '/a',
+      '/b',
+    ]);
+  });
+
+  it('大文字小文字は保存時に潰さない', () => {
+    expect(normalizeUrlFilter({ mode: 'deny', patterns: ['/API/Users'] }).patterns).toEqual([
+      '/API/Users',
+    ]);
+  });
+
+  it('上限を超えた分は切り捨てる', () => {
+    const patterns = Array.from({ length: MAX_URL_PATTERNS + 10 }, (_, index) => `/p${index}`);
+
+    expect(normalizeUrlFilter({ mode: 'deny', patterns }).patterns).toHaveLength(MAX_URL_PATTERNS);
+  });
+
+  it('呼ぶたびに新しい配列を返す（既定値を共有しない）', () => {
+    const first = normalizeUrlFilter(undefined);
+    first.patterns.push('/a');
+
+    expect(normalizeUrlFilter(undefined).patterns).toEqual([]);
   });
 });

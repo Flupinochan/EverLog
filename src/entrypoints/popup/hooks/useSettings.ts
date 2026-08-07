@@ -13,6 +13,7 @@ import {
   watchSettings,
   type Settings,
   type SettingsChangeSource,
+  type SettingsPatch,
   type SettingsStorageArea,
 } from '@/lib/settings';
 
@@ -21,7 +22,13 @@ export interface SettingsResult {
   /** まだ一度も読み終えていない状態。この間は操作させない */
   loading: boolean;
   error: string | null;
-  update: (patch: Partial<Settings>) => void;
+  /**
+   * 設定を書き換える。保存できたら true を返す。
+   *
+   * 例外にはせず真偽値で返す。呼び出し側の多くは投げっぱなしでよく（失敗は
+   * `error` に出る）、成否を見たい側だけが待てばよいため。
+   */
+  update: (patch: SettingsPatch) => Promise<boolean>;
 }
 
 /**
@@ -65,11 +72,15 @@ export function useSettings(
   }, [area, changes]);
 
   const update = useCallback(
-    (patch: Partial<Settings>) => {
+    async (patch: SettingsPatch) => {
       setError(null);
-      void saveSettings(area, patch).catch((cause: unknown) => {
+      try {
+        await saveSettings(area, patch);
+        return true;
+      } catch (cause: unknown) {
         setError(cause instanceof Error ? cause.message : String(cause));
-      });
+        return false;
+      }
     },
     [area],
   );
