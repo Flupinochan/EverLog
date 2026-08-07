@@ -31,6 +31,7 @@ function createFakeApi() {
 }
 
 interface FakeRequestOptions {
+  url?: string;
   mimeType?: string;
   size?: number;
   /** getContent がコールバックに渡す値。null を渡すと取得失敗を模す */
@@ -49,7 +50,7 @@ function createFakeRequest(options: FakeRequestOptions = {}): CapturedRequest {
     startedDateTime: '2026-08-05T12:00:00.000Z',
     time: 10,
     request: {
-      url: 'https://api.example.com/items',
+      url: options.url ?? 'https://api.example.com/items',
       method: 'POST',
       headers: [{ name: 'Content-Type', value: 'application/json' }],
     },
@@ -136,6 +137,59 @@ describe('startNetworkCapture', () => {
     expect(onGetContent).not.toHaveBeenCalled();
     expect(entry.bodyStatus).toBe('mime_excluded');
     expect(entry.body).toBeNull();
+  });
+
+  it('shouldCapture が false を返す URL では handler も getContent も呼ばない', async () => {
+    const fake = createFakeApi();
+    const onGetContent = vi.fn();
+    const handler = vi.fn();
+    const request = createFakeRequest({ url: 'https://api.example.com/oauth/token', onGetContent });
+
+    startNetworkCapture(fake.api, () => context, handler, undefined, (url) =>
+      !url.includes('/oauth/'),
+    );
+    fake.emit(request);
+    // getContent はマイクロタスクで応答するため、1 周待ってから確認する
+    await Promise.resolve();
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(onGetContent).not.toHaveBeenCalled();
+  });
+
+  it('shouldCapture が true を返す URL はこれまでどおり記録する', async () => {
+    const fake = createFakeApi();
+    const handler = vi.fn();
+
+    startNetworkCapture(fake.api, () => context, handler, undefined, (url) =>
+      !url.includes('/oauth/'),
+    );
+    fake.emit(createFakeRequest({ url: 'https://api.example.com/items', content: '{}' }));
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+  });
+
+  it('shouldCapture はリクエストごとに評価される（購読を張り直さずに設定変更へ追従する）', async () => {
+    const fake = createFakeApi();
+    const handler = vi.fn();
+    let blocking = false;
+
+    startNetworkCapture(fake.api, () => context, handler, undefined, () => !blocking);
+
+    fake.emit(createFakeRequest({ content: '{}' }));
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+
+    blocking = true;
+    fake.emit(createFakeRequest({ content: '{}' }));
+    await Promise.resolve();
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('shouldCapture を渡さなければすべて記録する', async () => {
+    const fake = createFakeApi();
+    const entry = await captureOnce(fake.api, () =>
+      fake.emit(createFakeRequest({ url: 'https://api.example.com/oauth/token', content: '{}' })),
+    );
+
+    expect(entry.url).toBe('https://api.example.com/oauth/token');
   });
 
   it('サイズ上限を超える場合も getContent を呼ばない', async () => {

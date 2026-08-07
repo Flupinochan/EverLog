@@ -106,6 +106,112 @@ export function matchesMimePatterns(mimeType: string, patterns: string[]): boole
   });
 }
 
+/** URL フィルタの解釈。`allow` は一致したものだけを記録し、`deny` は一致したものを記録しない。 */
+export type UrlFilterMode = 'allow' | 'deny';
+
+/** キャプチャ対象を URL で絞る設定。 */
+export interface UrlFilter {
+  mode: UrlFilterMode;
+  /** ワイルドカード `*` を使えるパターン。1 つも無ければフィルタ無しとして扱う */
+  patterns: string[];
+}
+
+/**
+ * 既定は「除外リストが空」。つまり全件記録する。
+ *
+ * 既定を `allow` にしない。空リストのときはどちらのモードでも全件記録になるが、
+ * 利用者が最初の 1 件を書いたときの挙動が `allow` では「それ以外すべてを捨てる」に
+ * なり、意図せず記録が止まるため。
+ */
+export const DEFAULT_URL_FILTER: UrlFilter = { mode: 'deny', patterns: [] };
+
+/**
+ * 保持できる URL パターンの上限。
+ *
+ * この判定はリクエストごとに全パターンを走査するため、上限を決めておく。
+ * 併せて `chrome.storage.local` に肥大した値が入るのも防ぐ。
+ */
+export const MAX_URL_PATTERNS = 50;
+
+/**
+ * URL がパターンのいずれかに一致するか。
+ *
+ * `*` は「任意の文字列」を表し、`/` も跨ぐ。パターンは**部分一致**で、URL の
+ * どこかに現れれば一致する（`foo` は `*foo*` と同じ）。前後を固定しないのは、
+ * 書き間違いが「一致しない＝記録される」に倒れると機微な API を取りこぼす
+ * 除外フィルタとして危険なため。閲覧側の URL フィルタ（`db.ts` の
+ * `urlIncludes`）が部分一致・大小無視なのとも作法が揃う。
+ *
+ * 正規表現には変換しない。`.` や `?` や `+` は URL に日常的に現れる文字であり、
+ * エスケープの取りこぼしがそのまま誤一致になるため、`*` で区切ったセグメントを
+ * 左から順に `indexOf` で辿る。
+ */
+export function matchesUrlPatterns(url: string, patterns: string[]): boolean {
+  const target = url.trim().toLowerCase();
+  return patterns.some((rawPattern) => {
+    const pattern = rawPattern.trim().toLowerCase();
+    // 空パターンを「全一致」にしない。空行が 1 つ混ざっただけで全件消えるのを防ぐ
+    if (pattern === '') return false;
+
+    let from = 0;
+    for (const segment of pattern.split('*')) {
+      // 先頭・末尾・連続した `*` は空セグメントになる。位置を進めずに読み飛ばす
+      if (segment === '') continue;
+      const index = target.indexOf(segment, from);
+      if (index === -1) return false;
+      from = index + segment.length;
+    }
+    return true;
+  });
+}
+
+/**
+ * この URL を記録すべきか。
+ *
+ * 中身のあるパターンが 1 つも無ければモードに関わらず記録する。「未設定」を
+ * `allow` の「何も許可しない」と解釈すると、設定を触っていない利用者や
+ * モードだけ切り替えた利用者が黙ってログを失うため。
+ */
+export function shouldCaptureUrl(url: string, filter: UrlFilter): boolean {
+  if (filter.patterns.every((pattern) => pattern.trim() === '')) return true;
+
+  const matched = matchesUrlPatterns(url, filter.patterns);
+  return filter.mode === 'allow' ? matched : !matched;
+}
+
+/**
+ * 保存されていた値を妥当な `UrlFilter` に整える。純粋関数。
+ *
+ * 設定層（`settings.ts`）から呼ぶ。パターンの意味を知っているのはこのモジュール
+ * なので、正規化もここに置く。
+ *
+ * パターンは小文字化しない。利用者が打った表記のまま往復させ、大小の吸収は
+ * 判定時にだけ行う。
+ */
+export function normalizeUrlFilter(raw: unknown): UrlFilter {
+  if (typeof raw !== 'object' || raw === null) {
+    return { mode: DEFAULT_URL_FILTER.mode, patterns: [] };
+  }
+
+  const source = raw as Record<string, unknown>;
+  const mode: UrlFilterMode =
+    source.mode === 'allow' || source.mode === 'deny' ? source.mode : DEFAULT_URL_FILTER.mode;
+
+  // 配列ごと捨てない。1 要素の型が壊れただけで除外リスト全体が消えると、
+  // 記録されないはずの API が黙って記録されてしまうため。
+  const rawPatterns = Array.isArray(source.patterns) ? source.patterns : [];
+  const patterns: string[] = [];
+  for (const pattern of rawPatterns) {
+    if (typeof pattern !== 'string') continue;
+    const trimmed = pattern.trim();
+    if (trimmed === '' || patterns.includes(trimmed)) continue;
+    patterns.push(trimmed);
+    if (patterns.length >= MAX_URL_PATTERNS) break;
+  }
+
+  return { mode, patterns };
+}
+
 /**
  * HAR のヘッダー配列をレコードに変換する。名前は小文字に正規化し、
  * 同名ヘッダーは `, ` で連結する。

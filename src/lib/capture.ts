@@ -90,6 +90,11 @@ export function getContentAsync(
  *   pageUrl が変わるため、リクエストごとに呼ぶ
  * @param handler 組み立て済みエントリの引き渡し先。次フェーズではここを
  *   保存層への送信に差し替える
+ * @param options ボディを取得する条件
+ * @param shouldCapture この URL を記録するか。false ならエントリを組み立てず、
+ *   `getContent()` も呼ばずに捨てる。値ではなく関数で受けるのは `getContext` と
+ *   同じ理由で、設定が購読中に変わるため。値で渡すと変更のたびに購読を張り直す
+ *   ことになり、その隙間でリクエストを取りこぼす
  * @returns 記録を停止する関数
  */
 export function startNetworkCapture(
@@ -97,8 +102,12 @@ export function startNetworkCapture(
   getContext: () => CaptureContext,
   handler: (entry: NetworkLogEntry) => void,
   options: CaptureOptions = DEFAULT_CAPTURE_OPTIONS,
+  shouldCapture: (url: string) => boolean = () => true,
 ): () => void {
   const listener: RequestFinishedListener = (request) => {
+    // 判定はサニタイズ前の生の URL に対して行う。トークンを含む URL をパターンで
+    // 名指しできるようにするため
+    if (!shouldCapture(request.request.url)) return;
     void handleRequestFinished(request, getContext(), handler, options);
   };
 
