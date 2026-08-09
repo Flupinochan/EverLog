@@ -1,8 +1,6 @@
 /**
  * 記録の ON/OFF。props を描くだけの表示コンポーネント。
  *
- * バッジ表示は background が設定の変更を購読して行うため、ここでは触らない。
- *
  * ネットワークとコンソールで同じものを使い回す。文言は `popup-view.ts` の
  * `describeNetworkRecording()` / `describeConsoleRecording()` が作るため、
  * このコンポーネントは自分がどちらの記録を表しているかを知らない。

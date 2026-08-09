@@ -5,8 +5,8 @@
  * しない。キャプチャ層が Chrome API を `startNetworkCapture()` の引数で受け取るのと
  * 同じ理由で、ブラウザなしでテストできる状態を保つため。
  *
- * 設定は DevTools ページ（記録の可否）・popup（操作）・background（バッジ表示）の
- * 3 つのコンテキストから読まれる。値を配るのではなく各自が `storage` を読み、
+ * 設定は DevTools ページ（記録の可否）・popup（操作）・background（コンソールログの
+ * 保存可否）の 3 つのコンテキストから読まれる。値を配るのではなく各自が `storage` を読み、
  * 変更は `watchSettings()` で受け取る。コンテキスト間のメッセージ配線を持たないため、
  * Service Worker の生存期間に依存しない。
  */
@@ -117,8 +117,7 @@ export function normalizeSettings(raw: unknown): Settings {
 /**
  * 設定を読む。取得に失敗しても例外にせず既定値を返す。
  *
- * 設定が読めないことを理由に記録やバッジ表示が止まるより、既定値で動いたほうが
- * 実害が小さいため。
+ * 設定が読めないことを理由に記録が止まるより、既定値で動いたほうが実害が小さいため。
  */
 export async function loadSettings(area: SettingsStorageArea): Promise<Settings> {
   try {
