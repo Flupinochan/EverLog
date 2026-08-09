@@ -1,9 +1,5 @@
 /**
- * Service Worker。バッジ表示と、コンソールログの保存を担う。
- *
- * 記録が有効であることを常時明示する。popup を開いていない間も
- * 設定の変更に追従させたいが、popup は閉じるとコンテキストごと消えるため、
- * ここで購読する。
+ * Service Worker。コンソールログの保存を担う。
  *
  * **ネットワークログの保存はここに置かない。** そちらは DevTools ページが
  * IndexedDB を直接開く（CLAUDE.md の設計上の制約）。
@@ -18,27 +14,7 @@ import { isConsoleBatchMessage, normalizeCapturedEntry } from '@/lib/console-log
 import { addConsoleLogs } from '@/lib/db';
 import { shouldCaptureUrl } from '@/lib/network-log';
 import { sanitizeConsoleEntry } from '@/lib/sanitize';
-import { loadSettings, watchSettings } from '@/lib/settings';
-
-/** 記録中に出すバッジ。数文字しか入らないため短く。 */
-const BADGE_TEXT = 'REC';
-const BADGE_COLOR = '#dc2626';
-
-async function applyBadge(recording: boolean): Promise<void> {
-  try {
-    await browser.action.setBadgeText({ text: recording ? BADGE_TEXT : '' });
-    if (recording) {
-      await browser.action.setBadgeBackgroundColor({ color: BADGE_COLOR });
-    }
-  } catch (error) {
-    console.error('[EverLog] failed to update badge', error);
-  }
-}
-
-async function refreshBadge(): Promise<void> {
-  const settings = await loadSettings(browser.storage.local);
-  await applyBadge(settings.recording);
-}
+import { loadSettings } from '@/lib/settings';
 
 /**
  * 届いたコンソールエントリをサニタイズして保存する。
@@ -78,19 +54,6 @@ async function saveConsoleEntries(entries: readonly unknown[], tabId: number | u
 }
 
 export default defineBackground(() => {
-  // Service Worker は起動のたびにこの本体を実行する。アイドルで終了した後に
-  // 起こされた場合もここを通るため、まず現在の設定でバッジを描き直す。
-  void refreshBadge();
-
-  // ブラウザ起動直後と、インストール・更新直後。上の 1 行で足りることが多いが、
-  // バッジは表示が消えても気づきにくいので取りこぼしを潰しておく。
-  browser.runtime.onStartup.addListener(() => void refreshBadge());
-  browser.runtime.onInstalled.addListener(() => void refreshBadge());
-
-  watchSettings(browser.storage, (settings) => {
-    void applyBadge(settings.recording);
-  });
-
   // コンソールログの受け口。ブリッジ（`console-bridge.content.ts`）だけが送ってくる
   browser.runtime.onMessage.addListener((message, sender) => {
     if (!isConsoleBatchMessage(message)) return;
