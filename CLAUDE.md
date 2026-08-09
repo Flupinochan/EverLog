@@ -18,7 +18,7 @@ src/                          # 本番用コード
 │   ├── devtools/             # Network のキャプチャ → サニタイズ → 保存 の配線、パネル登録
 │   ├── console-main.content.ts    # MAIN world で console.* を差し替える
 │   ├── console-bridge.content.ts  # ISOLATED world。設定を読み、background へ中継する
-│   ├── background.ts         # Service Worker（バッジ表示 + Console ログの保存）
+│   ├── background.ts         # Service Worker（Console ログの保存）
 │   ├── panel/                # 閲覧 UI
 │   │   ├── views/            # Network / Console それぞれの配線
 │   │   ├── components/       # 表示のみ
