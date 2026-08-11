@@ -6,47 +6,9 @@ import {
   normalizeSettings,
   saveSettings,
   watchSettings,
-  type SettingsChangeListener,
-  type SettingsChangeSource,
   type SettingsStorageArea,
 } from '@/lib/settings';
-
-/**
- * `chrome.storage.local` のフェイク。設定層は storage を引数で受け取るため、
- * ブラウザを立ち上げずに読み書きを検証できる。
- */
-function createFakeStorage(initial: Record<string, unknown> = {}) {
-  const data: Record<string, unknown> = { ...initial };
-  const storage: SettingsStorageArea = {
-    get: async (key) => (Object.hasOwn(data, key) ? { [key]: data[key] } : {}),
-    set: async (items) => {
-      Object.assign(data, items);
-    },
-  };
-  return { storage, data };
-}
-
-/** テストから任意の変更通知を流せる `chrome.storage.onChanged` のフェイク。 */
-function createFakeChangeSource() {
-  const listeners = new Set<SettingsChangeListener>();
-  const source: SettingsChangeSource = {
-    onChanged: {
-      addListener: (listener) => {
-        listeners.add(listener);
-      },
-      removeListener: (listener) => {
-        listeners.delete(listener);
-      },
-    },
-  };
-  return {
-    source,
-    listenerCount: () => listeners.size,
-    emit: (changes: Record<string, { newValue?: unknown }>, areaName = 'local') => {
-      for (const listener of listeners) listener(changes, areaName);
-    },
-  };
-}
+import { createFakeChangeSource, createFakeStorage } from '../support/fakes';
 
 describe('normalizeSettings', () => {
   it('未設定なら既定値を返す', () => {

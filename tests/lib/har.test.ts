@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import type { StoredLog } from '@/lib/db';
 import {
   HAR_COMMENT,
   buildHar,
@@ -9,41 +8,7 @@ import {
   recordToHeaders,
   toHarEntry,
 } from '@/lib/har';
-import type { NetworkLogEntry } from '@/lib/network-log';
-import { sanitizeEntry } from '@/lib/sanitize';
-
-/**
- * 変換元は必ずサニタイズ層を通す。保存層が `SanitizedLogEntry` しか受け取らない以上、
- * 出力に流れてくるのもサニタイズ済みの値だけであり、そこを揃えないとテストが実物から
- * ずれる（`tests/lib/db.test.ts` の `sanitized()` と同じ方針）。
- */
-function storedLog(overrides: Partial<NetworkLogEntry> = {}, id = 1): StoredLog {
-  const entry: NetworkLogEntry = {
-    ts: 1_700_000_000_000,
-    tabId: 7,
-    pageUrl: 'https://example.com/app',
-    url: 'https://api.example.com/users',
-    method: 'GET',
-    status: 200,
-    mimeType: 'application/json',
-    timeMs: 12.5,
-    requestHeaders: { accept: 'application/json' },
-    responseHeaders: { 'content-type': 'application/json' },
-    body: null,
-    bodySize: 0,
-    bodyStatus: 'stored',
-    ...overrides,
-  };
-
-  const { body: _body, ...rest } = sanitizeEntry(entry);
-  let host = '';
-  try {
-    host = new URL(rest.url).host;
-  } catch {
-    host = '';
-  }
-  return { ...rest, id, host };
-}
+import { storedLog } from '../support/fixtures';
 
 describe('recordToHeaders', () => {
   it('レコードを HAR のヘッダー配列にする', () => {

@@ -76,8 +76,10 @@ export function FilterBar({
         value={form.status}
         onChange={(event) => onChange({ status: event.target.value })}
       />
+      {/* 日時の 2 つはプレースホルダを持てないため、名前を aria-label で与える */}
       <input
         type="datetime-local"
+        aria-label="開始日時"
         className={CONTROL}
         value={form.from}
         onChange={(event) => onChange({ from: event.target.value })}
@@ -85,6 +87,7 @@ export function FilterBar({
       <span className="text-xs text-zinc-500">〜</span>
       <input
         type="datetime-local"
+        aria-label="終了日時"
         className={CONTROL}
         value={form.to}
         onChange={(event) => onChange({ to: event.target.value })}
