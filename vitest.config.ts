@@ -10,6 +10,10 @@ export default defineConfig({
     // .tsx も拾う（panel / popup の UI テストが増えたときに黙って
     // スキップされ、それでも緑になるのを防ぐ）。
     include: ['tests/**/*.test.{ts,tsx}'],
+    // 既定の環境は node のまま。DOM が要るのは UI テストだけで、そちらは
+    // ファイル先頭の `// @vitest-environment jsdom` で切り替える。全体に jsdom を
+    // 敷くと、`console-log.ts` のように DOM に依存しないと決めたモジュールの
+    // テストにも DOM が生えてしまい、その制約を環境で担保できなくなる。
     setupFiles: ['fake-indexeddb/auto'],
   },
 });

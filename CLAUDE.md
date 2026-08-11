@@ -37,6 +37,9 @@ src/                          # 本番用コード
     ├── har.ts                # Network エントリ → HAR 1.2 変換（純粋関数）
     └── console-export.ts     # Console エントリ → 出力 JSON 変換（純粋関数）
 tests/                        # テストコード
+├── lib/                      # 純粋関数・保存層（node 環境）
+├── entrypoints/              # React の UI テスト（jsdom 環境）
+└── support/                  # 描画ヘルパ・フェイク・ログの組み立て
 ```
 
 ## 設計上の制約
@@ -66,6 +69,13 @@ tests/                        # テストコード
 - `chrome.storage` を受け取る引数は `area` と名付ける
 - テストは `vitest.config.ts` の `WxtVitest()` で自動 import・パスエイリアスが解決される
 - `browser` のモックは `wxt/testing/fake-browser` の `fakeBrowser` を使う
+- UI テストは `tests/entrypoints/` に置き、ファイル先頭に `// @vitest-environment jsdom` を
+  書く（既定は node 環境。全体に jsdom を敷くと `lib/` の DOM 非依存を担保できなくなる）。
+  描画は `tests/support/render.tsx` 経由で行う（cleanup の登録がここにある）
+- テスト間で使い回すフェイクとログの組み立ては `tests/support/` に置く。
+  `LogSource` / `LogAdmin` / `chrome.storage` は差し替えて渡し、実物を開かない
+- 表示コンポーネントは props を描くだけに保つ。取得と整形を混ぜると UI テストから
+  実データが必要になる
 - `db.ts` のスキーマを変えるときは `DB_VERSION` を上げ、`onupgradeneeded` の
   `objectStoreNames.contains()` ガードを崩さない（既存のデータを消さないため）。
   更新の検証は `tests/lib/db-upgrade.test.ts` に置く（接続がキャッシュされるため別ファイルに分ける）
